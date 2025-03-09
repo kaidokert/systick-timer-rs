@@ -37,7 +37,7 @@ impl<const N: usize> SystickDriver<N> {
     ///
     ///  Note the tick frequency is configured to embassy_time_driver::TICK_HZ.
     ///
-    pub const fn new(systick_freq: u32, reload_value: u32) -> Self {
+    pub const fn new(systick_freq: u64, reload_value: u32) -> Self {
         let timer = crate::Timer::new(embassy_time_driver::TICK_HZ, reload_value, systick_freq);
         Self {
             wakeup_at: Mutex::new(RefCell::new([const { None }; N])),
@@ -54,7 +54,7 @@ impl<const N: usize> SystickDriver<N> {
     ///
     /// * `systick_freq` - The frequency of the SysTick timer in Hz.
     ///
-    pub const fn new_default(systick_freq: u32) -> Self {
+    pub const fn new_default(systick_freq: u64) -> Self {
         let reload = (systick_freq / embassy_time_driver::TICK_HZ) - 1;
         Self::new(systick_freq, reload as u32)
     }

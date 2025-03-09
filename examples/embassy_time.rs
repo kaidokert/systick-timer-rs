@@ -42,7 +42,7 @@ async fn main(_s: embassy_executor::Spawner) {
 
     let future1 = my_first_async_function();
     let future2 = my_second_async_function();
-    let result = join!(future1, future2);
+    let _result = join!(future1, future2);
     hprintln!("Join completed");
     debug::exit(EXIT_SUCCESS);
 }

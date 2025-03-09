@@ -33,7 +33,7 @@ fn main() -> ! {
 
 #[cortex_m_rt::exception]
 fn SysTick() {
-    INSTANCE.systick_interrupt_for_nested();
+    INSTANCE.systick_handler();
 }
 
 #[panic_handler]
