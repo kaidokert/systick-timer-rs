@@ -1,6 +1,6 @@
 [package]
 name = "systick-timer"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["kaidokert <kaidokert@gmail.com>"]
@@ -9,8 +9,8 @@ description = """
 64-bit SysTick timer for Cortex-M0
 """
 readme = "README.md"
-repository = "https://github.com/kaidokert/winc-rs"
-homepage = "https://github.com/kaidokert/winc-rs"
+repository = "https://github.com/kaidokert/systick-timer-rs"
+homepage = "https://github.com/kaidokert/systick-timer-rs"
 
 [dependencies]
 cortex-m = "0.7"
@@ -33,6 +33,12 @@ futures = { version = "0.3", default-features = false, features = [
     "async-await",
 ] }
 cortex-m-semihosting = { version = "0.5" }
+
+[[example]]
+name = "basic_time"
+required-features = [
+    "cortex-m",
+]
 
 [[example]]
 name = "embassy_time"

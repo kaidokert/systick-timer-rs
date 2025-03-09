@@ -12,17 +12,29 @@
 //!
 //! Usage:
 //! ```ignore
-//! use systick_timer::Timer;
-//! // Set up timer with 1ms resolution, reload at 1ms, 48MHz clock
-//! let timer = Timer::new(1000, 47999, 48_000_000);
-//! timer.start(&mut cortex_m::Peripherals::take().unwrap().SYST);
-//! // Get the current time in milliseconds
-//! let now = timer.now();
+//! // Set up timer with 1ms resolution, reload at 100us, 8MHz clock
+//! static INSTANCE : Timer = Timer::new(1_000, 799, 8_000_000);
+//!
+//! #[cortex_m_rt::entry]
+//! fn main() -> ! {
+//!     // Configure and start SYST
+//!     INSTANCE.start(&mut cortex_m::Peripherals::take().unwrap().SYST);
+//!     // Get the current time in milliseconds
+//!      let now = timer.now();
+//! }
 //! ```
-//! Alternatively, to reduce the frequency of overflow interrupts,
+//! Call the timer from your Systick handler:
+//! ```ignore
+//! #[exception]
+//! fn SysTick() {
+//!     INSTANCE.systick_handler();
+//! }
+//! ```
+//!
+//! To reduce the frequency of overflow interrupts,
 //! you can use the maximum reload value:
 //! ```ignore
-//! let timer = Timer::new(1000, 16_777_215, 48_000_000);
+//! let timer = Timer::new(1_000, 16_777_215, 48_000_000);
 //! ```
 //! This generates an interrupt and reloads the timer every ~350ms, but
 //! the resolution is still 1ms
