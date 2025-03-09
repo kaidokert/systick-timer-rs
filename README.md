@@ -12,3 +12,15 @@ and cortex-m-rt crates.
 Optionally wraps this in an embassy-time-driver.
 
 Example included for Qemu Cortex-M0
+
+To run the demos with Qemu:
+
+```
+cargo runq --example basic_time
+```
+
+Embassy version:
+
+```
+cargo runq --example embassy_time
+```
