@@ -13,6 +13,7 @@ repository = "https://github.com/kaidokert/systick-timer-rs"
 homepage = "https://github.com/kaidokert/systick-timer-rs"
 keywords = ["embassy","no_std","cortex-m"]
 categories = ["hardware-support","no-std","embedded"]
+exclude = ["/.github/*", ".pre-commit-config.yaml"]
 
 [dependencies]
 cortex-m = "0.7"
