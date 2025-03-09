@@ -2,7 +2,7 @@
 
 [![crate](https://img.shields.io/crates/v/systick-timer.svg)](https://crates.io/crates/systick-timer)
 [![documentation](https://docs.rs/systick-timer/badge.svg)](https://docs.rs/systick-timer/)
-
+[![Build](https://github.com/kaidokert/systick-timer-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/kaidokert/systick-timer-rs/actions/workflows/rust.yml)
 
 Implements a 64-bit SysTick based timer, that tracks
 overflows and provides as single monotonic 64-bit value
