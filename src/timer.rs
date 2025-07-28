@@ -63,7 +63,15 @@ impl Timer {
                 let total_cycles = total_interrupts * (reload + 1) + (reload - current);
 
                 // Scale to ticks (e.g., microseconds) using precomputed multiplier and shift
-                return (total_cycles * self.multiplier) >> self.shift;
+                let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
+                if !overflow {
+                    // Fast path: No overflow, use the u64 result directly.
+                    return result >> self.shift;
+                } else {
+                    // Slow path: Overflow occurred, fall back to u128 for correctness.
+                    let total_cycles_128 = total_cycles as u128;
+                    return ((total_cycles_128 * self.multiplier as u128) >> self.shift) as u64;
+                }
             }
         }
     }
@@ -317,5 +325,25 @@ mod tests {
 
         // At position 2, we're 3 cycles in = 3 more ticks
         assert_eq!(timer.set_tick(2), 63);
+    }
+
+    #[test]
+    fn test_u64_overflow_scenario() {
+        // Timer configuration from the real application:
+        // TICK_RESOLUTION: 10_000_000 (tick_hz)
+        // reload_value: 0xFFFFFF (16,777,215)
+        // systick_freq: 100_000_000
+        let timer = Timer::new(10_000_000, 0xFFFFFF, 100_000_000);
+
+        let total_interrupts = 2560u64;
+        let outer = (total_interrupts >> 32) as u32;
+        let inner = total_interrupts as u32;
+
+        timer.outer_wraps.store(outer, Ordering::Relaxed);
+        timer.inner_wraps.store(inner, Ordering::Relaxed);
+
+        // This call should take the u128 fallback path.
+        let expected_ticks = 4_296_645_011;
+        assert_eq!(timer.now(), expected_ticks);
     }
 }
