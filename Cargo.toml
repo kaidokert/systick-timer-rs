@@ -21,7 +21,7 @@ cortex-m-rt = "0.7.5"
 embassy-time-driver = { version = "0.2", optional = true }
 
 [features]
-default = []
+default = ["cortex-m"]
 cortex-m = []
 embassy-defaults = [] # Set up a default/demo instance
 

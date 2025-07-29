@@ -16,9 +16,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
+    - name: Build ( cortex-m )
+      run: cargo build --verbose --no-default-features
     - name: Run tests
-      run: cargo test --verbose
-    - name: Build for no_std
-      run: cargo build --no-default-features
+      run: cargo test --verbose --no-default-features
+    - name: Build
+      run: cargo build
