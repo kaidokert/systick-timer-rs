@@ -24,3 +24,10 @@ Embassy version:
 ```
 cargo runq --example embassy_time
 ```
+
+## Testing
+
+To run the tests, run without default features
+```
+cargo test --no-default-features
+```
