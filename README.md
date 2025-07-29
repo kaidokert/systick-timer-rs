@@ -27,7 +27,6 @@ cargo runq --example embassy_time
 
 ## Testing
 
-To run the tests, run without default features
-```
+To run the tests, run without default features:
+```sh
 cargo test --no-default-features
-```
