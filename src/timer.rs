@@ -81,7 +81,7 @@ impl Timer {
         let (wraps_u64, final_val_u64) = if wraps_pre == wraps_post {
             // No ISR in window → VAL matches wraps_pre. COUNTFLAG may indicate a pending wrap.
             if self.read_systick_countflag() {
-                (wraps_pre + 1, v1)
+                (wraps_pre + 1, self.get_syst() as u64)
             } else {
                 (wraps_pre, v1)
             }
