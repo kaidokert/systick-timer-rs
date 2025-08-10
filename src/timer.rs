@@ -14,9 +14,21 @@ pub struct Timer {
     shift: u32,             // Precomputed for scaling efficiency
     #[cfg(test)]
     current_systick: u32,
+    #[cfg(test)]
+    systick_has_wrapped: core::sync::atomic::AtomicBool,
 }
 
 impl Timer {
+    #[cfg(test)]
+    pub fn set_syst(&mut self, value: u32) {
+        self.current_systick = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_systick_has_wrapped(&self, val: bool) {
+        self.systick_has_wrapped
+            .store(val, core::sync::atomic::Ordering::SeqCst);
+    }
     /// SysTick handler.
     ///
     /// Call this from the SysTick interrupt handler.
@@ -111,7 +123,9 @@ impl Timer {
     fn read_systick_countflag(&self) -> bool {
         #[cfg(test)]
         {
-            return false;
+            return self
+                .systick_has_wrapped
+                .swap(false, core::sync::atomic::Ordering::SeqCst);
         }
 
         // # Safety
@@ -182,6 +196,8 @@ impl Timer {
             shift,
             #[cfg(test)]
             current_systick: 0,
+            #[cfg(test)]
+            systick_has_wrapped: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -387,5 +403,68 @@ mod tests {
         // This call should take the u128 fallback path.
         let expected_ticks = 4_296_645_011;
         assert_eq!(timer.now(), expected_ticks);
+    }
+
+    #[test]
+    fn test_monotonicity_around_wrap() {
+        const RELOAD: u32 = 100;
+        let mut timer = Timer::new(1_000, RELOAD, 1_000);
+
+        // 1. Time right before the wrap
+        timer.set_syst(1);
+        let t1 = timer.now();
+
+        // 2. Simulate the hardware wrap:
+        //    - The hardware counter wraps from 0 to RELOAD.
+        //    - The COUNTFLAG gets set.
+        //    - The ISR has NOT run yet.
+        timer.set_syst(RELOAD);
+        timer.set_systick_has_wrapped(true);
+
+        // 3. Time right after the wrap
+        let t2 = timer.now();
+
+        // The key assertion: time must not go backward.
+        // The new logic reads the COUNTFLAG and virtually adds a wrap,
+        // preventing the non-monotonic jump.
+        assert!(
+            t2 >= t1,
+            "Timer is not monotonic: t1 was {}, t2 was {}",
+            t1,
+            t2
+        );
+
+        // For sanity, let's check the values.
+        // t1 should be close to the end of a period.
+        // t2 should be at the beginning of the *next* period.
+        assert_eq!(t1, 99);
+        assert_eq!(t2, 101);
+    }
+
+    #[test]
+    fn test_monotonicity_between_interrupts() {
+        const RELOAD: u32 = 100;
+        let mut timer = Timer::new(1_000, RELOAD, 1_000);
+
+        // Set the counter to the reload value, no wraps yet.
+        timer.set_syst(RELOAD);
+        let t1 = timer.now();
+
+        // Simulate time passing by decrementing the hardware counter.
+        timer.set_syst(RELOAD / 2);
+        let t2 = timer.now();
+
+        // Decrement again.
+        timer.set_syst(0);
+        let t3 = timer.now();
+
+        // Assert that time is always moving forward.
+        assert!(t2 > t1, "t2 ({}) should be > t1 ({})", t2, t1);
+        assert!(t3 > t2, "t3 ({}) should be > t2 ({})", t3, t2);
+
+        // Also check the specific values for correctness.
+        assert_eq!(t1, 0);
+        assert_eq!(t2, 50);
+        assert_eq!(t3, 100);
     }
 }
