@@ -14,13 +14,28 @@ pub struct Timer {
     shift: u32,             // Precomputed for scaling efficiency
     #[cfg(test)]
     current_systick: u32,
+    #[cfg(test)]
+    systick_has_wrapped: core::sync::atomic::AtomicBool,
 }
 
 impl Timer {
+    #[cfg(test)]
+    pub fn set_syst(&mut self, value: u32) {
+        self.current_systick = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_systick_has_wrapped(&self, val: bool) {
+        self.systick_has_wrapped
+            .store(val, core::sync::atomic::Ordering::SeqCst);
+    }
     /// SysTick handler.
     ///
     /// Call this from the SysTick interrupt handler.
     pub fn systick_handler(&self) {
+        // Guarantee the COUNTFLAG is cleared
+        self.read_systick_countflag();
+
         // Increment inner_wraps and check for overflow
         let inner = self.inner_wraps.load(Ordering::Relaxed);
         // Check for overflow (inner was u32::MAX)
@@ -47,32 +62,48 @@ impl Timer {
 
     /// Returns the current 64-bit tick count, scaled to the configured frequency `tick_hz`.
     pub fn now(&self) -> u64 {
-        // Note: This does not enter critical section and block other interrupts.
-        loop {
-            // Load current counter values
-            let inner1 = self.inner_wraps.load(Ordering::SeqCst) as u64;
-            let outer = self.outer_wraps.load(Ordering::SeqCst) as u64;
-            let inner2 = self.inner_wraps.load(Ordering::SeqCst) as u64;
-            // Detect if interrupt happened between the two loads
-            if inner1 == inner2 {
-                let current = self.get_syst() as u64; // Current SysTick counter value
+        let reload = self.reload_value as u64;
 
-                // Total cycles = (total interrupts * cycles per interrupt) + remaining cycles
-                let reload = self.reload_value as u64;
-                let total_interrupts = (outer << 32) | inner1;
-                let total_cycles = total_interrupts * (reload + 1) + (reload - current);
+        // 1) SW counters (pre)
+        let in1 = self.inner_wraps.load(Ordering::SeqCst) as u64;
+        let out1 = self.outer_wraps.load(Ordering::SeqCst) as u64;
+        let wraps_pre = (out1 << 32) | in1;
 
-                // Scale to ticks (e.g., microseconds) using precomputed multiplier and shift
-                let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
-                if !overflow {
-                    // Fast path: No overflow, use the u64 result directly.
-                    return result >> self.shift;
-                } else {
-                    // Slow path: Overflow occurred, fall back to u128 for correctness.
-                    let total_cycles_128 = total_cycles as u128;
-                    return ((total_cycles_128 * self.multiplier as u128) >> self.shift) as u64;
-                }
+        // 2) HW down-counter
+        let v1 = self.get_syst() as u64;
+
+        // 3) SW counters (post)
+        let in2 = self.inner_wraps.load(Ordering::SeqCst) as u64;
+        let out2 = self.outer_wraps.load(Ordering::SeqCst) as u64;
+        let wraps_post = (out2 << 32) | in2;
+
+        // Coherent (wraps, val)
+        let (wraps_u64, final_val_u64) = if wraps_pre == wraps_post {
+            // No ISR in window → VAL matches wraps_pre. COUNTFLAG may indicate a pending wrap.
+            if self.read_systick_countflag() {
+                (wraps_pre + 1, self.get_syst() as u64)
+            } else {
+                (wraps_pre, v1)
             }
+        } else {
+            // ISR ran → use post counters and refresh VAL to match them.
+            (wraps_post, self.get_syst() as u64)
+        };
+
+        // total_cycles = wraps*(reload+1) + (reload - final_val)
+        // This cannot overflow u64 in any realistic uptime.
+        let total_cycles = wraps_u64
+            .saturating_mul(reload + 1)
+            .saturating_add(reload - final_val_u64);
+
+        // Scale to ticks (e.g., microseconds) using precomputed multiplier and shift
+        let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
+        if !overflow {
+            result >> self.shift
+        } else {
+            // Slow path: Overflow occurred, fall back to u128 for correctness.
+            let wide = (total_cycles as u128) * (self.multiplier as u128);
+            (wide >> self.shift) as u64
         }
     }
 
@@ -86,6 +117,31 @@ impl Timer {
 
         #[cfg(all(not(test), not(feature = "cortex-m")))]
         panic!("This module requires the cortex-m crate to be available");
+    }
+
+    #[inline(always)]
+    fn read_systick_countflag(&self) -> bool {
+        #[cfg(test)]
+        {
+            return self
+                .systick_has_wrapped
+                .swap(false, core::sync::atomic::Ordering::SeqCst);
+        }
+
+        // # Safety
+        // Not safe in any way - it's mutating the flag register without having & mut
+        #[cfg(all(not(test), feature = "cortex-m"))]
+        unsafe {
+            // COUNTFLAG is bit 16. Read clears it.
+            const COUNTFLAG: u32 = 1 << 16;
+            let csr = (*cortex_m::peripheral::SYST::PTR).csr.read();
+            (csr & COUNTFLAG) != 0
+        }
+
+        #[cfg(all(not(test), not(feature = "cortex-m")))]
+        {
+            panic!("This module requires the cortex-m crate");
+        }
     }
 
     // Figure out a shift that leads to less precision loss
@@ -140,6 +196,8 @@ impl Timer {
             shift,
             #[cfg(test)]
             current_systick: 0,
+            #[cfg(test)]
+            systick_has_wrapped: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -345,5 +403,68 @@ mod tests {
         // This call should take the u128 fallback path.
         let expected_ticks = 4_296_645_011;
         assert_eq!(timer.now(), expected_ticks);
+    }
+
+    #[test]
+    fn test_monotonicity_around_wrap() {
+        const RELOAD: u32 = 100;
+        let mut timer = Timer::new(1_000, RELOAD, 1_000);
+
+        // 1. Time right before the wrap
+        timer.set_syst(1);
+        let t1 = timer.now();
+
+        // 2. Simulate the hardware wrap:
+        //    - The hardware counter wraps from 0 to RELOAD.
+        //    - The COUNTFLAG gets set.
+        //    - The ISR has NOT run yet.
+        timer.set_syst(RELOAD);
+        timer.set_systick_has_wrapped(true);
+
+        // 3. Time right after the wrap
+        let t2 = timer.now();
+
+        // The key assertion: time must not go backward.
+        // The new logic reads the COUNTFLAG and virtually adds a wrap,
+        // preventing the non-monotonic jump.
+        assert!(
+            t2 >= t1,
+            "Timer is not monotonic: t1 was {}, t2 was {}",
+            t1,
+            t2
+        );
+
+        // For sanity, let's check the values.
+        // t1 should be close to the end of a period.
+        // t2 should be at the beginning of the *next* period.
+        assert_eq!(t1, 99);
+        assert_eq!(t2, 101);
+    }
+
+    #[test]
+    fn test_monotonicity_between_interrupts() {
+        const RELOAD: u32 = 100;
+        let mut timer = Timer::new(1_000, RELOAD, 1_000);
+
+        // Set the counter to the reload value, no wraps yet.
+        timer.set_syst(RELOAD);
+        let t1 = timer.now();
+
+        // Simulate time passing by decrementing the hardware counter.
+        timer.set_syst(RELOAD / 2);
+        let t2 = timer.now();
+
+        // Decrement again.
+        timer.set_syst(0);
+        let t3 = timer.now();
+
+        // Assert that time is always moving forward.
+        assert!(t2 > t1, "t2 ({}) should be > t1 ({})", t2, t1);
+        assert!(t3 > t2, "t3 ({}) should be > t2 ({})", t3, t2);
+
+        // Also check the specific values for correctness.
+        assert_eq!(t1, 0);
+        assert_eq!(t2, 50);
+        assert_eq!(t3, 100);
     }
 }
