@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// A 64-bit timer based on SysTick.
 ///
@@ -13,22 +13,16 @@ pub struct Timer {
     multiplier: u64,        // Precomputed for scaling cycles to ticks
     shift: u32,             // Precomputed for scaling efficiency
     #[cfg(test)]
-    current_systick: u32,
+    current_systick: AtomicU32,
     #[cfg(test)]
-    systick_has_wrapped: core::sync::atomic::AtomicBool,
+    systick_has_wrapped: AtomicBool, // emulated COUNTFLAG (read-to-clear)
+    #[cfg(test)]
+    after_v1_hook: Option<fn(&Timer)>, // injected nested call site
+    #[cfg(test)]
+    hook_enabled: AtomicBool, // guard to avoid recursion
 }
 
 impl Timer {
-    #[cfg(test)]
-    pub fn set_syst(&mut self, value: u32) {
-        self.current_systick = value;
-    }
-
-    #[cfg(test)]
-    pub fn set_systick_has_wrapped(&self, val: bool) {
-        self.systick_has_wrapped
-            .store(val, core::sync::atomic::Ordering::SeqCst);
-    }
     /// SysTick handler.
     ///
     /// Call this from the SysTick interrupt handler.
@@ -110,7 +104,7 @@ impl Timer {
     /// Returns the current SysTick counter value.
     fn get_syst(&self) -> u32 {
         #[cfg(test)]
-        return self.current_systick;
+        return self.current_systick.load(Ordering::SeqCst);
 
         #[cfg(all(not(test), feature = "cortex-m"))]
         return cortex_m::peripheral::SYST::get_current();
@@ -195,10 +189,30 @@ impl Timer {
             multiplier,
             shift,
             #[cfg(test)]
-            current_systick: 0,
+            current_systick: AtomicU32::new(0),
             #[cfg(test)]
-            systick_has_wrapped: core::sync::atomic::AtomicBool::new(false),
+            systick_has_wrapped: AtomicBool::new(false),
+            #[cfg(test)]
+            after_v1_hook: None,
+            #[cfg(test)]
+            hook_enabled: AtomicBool::new(false),
         }
+    }
+
+    // -------- test-only helpers ----------
+    #[cfg(test)]
+    pub fn set_syst(&self, value: u32) {
+        self.current_systick.store(value, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub fn set_systick_has_wrapped(&self, val: bool) {
+        self.systick_has_wrapped.store(val, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub fn set_after_v1_hook(&mut self, hook: Option<fn(&Timer)>) {
+        self.after_v1_hook = hook;
     }
 
     /// Call this if you haven't already started the timer.
@@ -226,7 +240,7 @@ mod tests {
     fn test_timer_new() {
         let mut timer = Timer::new(1000, 5, 12_000);
         timer.inner_wraps.store(4, Ordering::Relaxed); // 4 interrupts = 24 cycles
-        timer.current_systick = 3; // Start of next period
+        timer.set_syst(3); // Start of next period
         assert_eq!(timer.now(), 2); // Should be ~2 ticks
     }
 
@@ -254,11 +268,11 @@ mod tests {
         }
         fn interrupt(&mut self) {
             self.timer.systick_handler();
-            self.timer.current_systick = RELOAD;
+            self.timer.set_syst(RELOAD);
         }
         fn set_tick(&mut self, tick: u32) -> u64 {
             assert!(tick <= RELOAD);
-            self.timer.current_systick = tick;
+            self.timer.set_syst(tick);
             self.timer.now()
         }
     }
@@ -305,7 +319,7 @@ mod tests {
         // Set up for outer_wraps overflow
         timer.timer.inner_wraps.store(u32::MAX, Ordering::Relaxed);
         timer.timer.outer_wraps.store(u32::MAX, Ordering::Relaxed);
-        timer.timer.current_systick = 5;
+        timer.timer.set_syst(5);
 
         // One more interrupt should wrap outer_wraps
         timer.interrupt();
@@ -364,7 +378,7 @@ mod tests {
     fn test_interrupt_race() {
         let mut timer = TestTimer::<5>::new(1000, 1000);
         timer.interrupt();
-        timer.timer.current_systick = 3;
+        timer.timer.set_syst(3);
         let t1 = timer.timer.now();
         timer.interrupt();
         let t2 = timer.timer.now();
