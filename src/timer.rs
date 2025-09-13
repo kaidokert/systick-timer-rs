@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn test_monotonicity_around_wrap() {
         const RELOAD: u32 = 100;
-        let mut timer = Timer::new(1_000, RELOAD, 1_000);
+        let timer = Timer::new(1_000, RELOAD, 1_000);
 
         // 1. Time right before the wrap
         timer.set_syst(1);
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn test_monotonicity_between_interrupts() {
         const RELOAD: u32 = 100;
-        let mut timer = Timer::new(1_000, RELOAD, 1_000);
+        let timer = Timer::new(1_000, RELOAD, 1_000);
 
         // Set the counter to the reload value, no wraps yet.
         timer.set_syst(RELOAD);
@@ -480,5 +480,37 @@ mod tests {
         assert_eq!(t1, 0);
         assert_eq!(t2, 50);
         assert_eq!(t3, 100);
+    }
+
+    const FREQ: u64 = 48_000_000;
+    const RELOAD: u32 = 100; // small for easy arithmetic; period = 101 cycles
+
+    // Hook: simulate a hardware wrap between v1 and wraps_post and
+    // have a nested `now_old()` consume COUNTFLAG.
+    fn nested_clears_countflag(t: &Timer) {
+        // Hardware just wrapped: COUNTFLAG=1, VAL near reload
+        t.set_systick_has_wrapped(true);
+        t.set_syst(RELOAD - 10); // VAL = 90
+
+        // Nested call (e.g., an ISR or another layer) reads COUNTFLAG and clears it.
+        let _ = t.now();
+
+        // Time advances a bit more before outer resumes
+        t.set_syst(RELOAD - 20); // VAL = 80
+    }
+
+    #[test]
+    fn shows_old_now_under_counts_with_nested_clear() {
+        let mut timer = Timer::new(FREQ, RELOAD, FREQ);
+        // Choose v1 near end of period so a wrap is imminent
+        timer.set_syst(2);
+        timer.set_systick_has_wrapped(false);
+        timer.set_after_v1_hook(Some(nested_clears_countflag));
+
+        // Using the old COUNTFLAG tie-breaker should undercount:
+        // wraps_pre==wraps_post==0, COUNTFLAG was cleared by nested -> uses v1=2
+        // total_cycles_bug = 0*(101) + (100 - 2) = 98
+        let bug = timer.now();
+        assert_eq!(bug, 98, "old path under-counts due to stolen COUNTFLAG");
     }
 }
