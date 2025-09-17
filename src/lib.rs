@@ -73,7 +73,7 @@
 //! }
 //! ```
 
-mod timer;
+pub mod timer;
 pub use timer::Timer;
 
 #[cfg(feature = "embassy-time-driver")]

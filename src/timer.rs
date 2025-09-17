@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
+
+#[cfg(test)]
+use core::sync::atomic::AtomicBool;
 
 /// A 64-bit timer based on SysTick.
 ///
@@ -58,51 +61,54 @@ impl Timer {
     pub fn now(&self) -> u64 {
         let reload = self.reload_value as u64;
 
-        // 1) SW counters (pre)
-        let in1 = self.inner_wraps.load(Ordering::SeqCst) as u64;
-        let out1 = self.outer_wraps.load(Ordering::SeqCst) as u64;
-        let wraps_pre = (out1 << 32) | in1;
+        loop {
+            // 1) SW counters (pre)
+            let in1 = self.inner_wraps.load(Ordering::SeqCst) as u64;
+            let out1 = self.outer_wraps.load(Ordering::SeqCst) as u64;
+            let wraps_pre = (out1 << 32) | in1;
 
-        // 2) HW down-counter
-        let v1 = self.get_syst() as u64;
+            // 2) HW down-counter and COUNTFLAG
+            let final_val = self.get_syst() as u64;
+            let has_wrapped = self.read_systick_countflag();
 
-        // 3) SW counters (post)
-        let in2 = self.inner_wraps.load(Ordering::SeqCst) as u64;
-        let out2 = self.outer_wraps.load(Ordering::SeqCst) as u64;
-        let wraps_post = (out2 << 32) | in2;
+            // 3) SW counters (post)
+            let in2 = self.inner_wraps.load(Ordering::SeqCst) as u64;
+            let out2 = self.outer_wraps.load(Ordering::SeqCst) as u64;
+            let wraps_post = (out2 << 32) | in2;
 
-        // Coherent (wraps, val)
-        let (wraps_u64, final_val_u64) = if wraps_pre == wraps_post {
-            // No ISR in window → VAL matches wraps_pre. COUNTFLAG may indicate a pending wrap.
-            if self.read_systick_countflag() {
-                (wraps_pre + 1, self.get_syst() as u64)
-            } else {
-                (wraps_pre, v1)
+            if wraps_pre == wraps_post {
+                // No interrupt occurred between reading wraps_pre and wraps_post.
+                // This means our snapshot of (wraps_pre, final_val, has_wrapped) is consistent.
+                let wraps_u64 = if has_wrapped {
+                    // A wrap occurred right before we read the counter, but the ISR hasn't run yet.
+                    // We must account for this wrap ourselves.
+                    wraps_pre + 1
+                } else {
+                    wraps_pre
+                };
+
+                // total_cycles = wraps*(reload+1) + (reload - final_val)
+                let total_cycles = wraps_u64
+                    .saturating_mul(reload + 1)
+                    .saturating_add(reload - final_val);
+
+                // Scale to ticks (e.g., microseconds) using precomputed multiplier and shift
+                let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
+                let final_ticks = if !overflow {
+                    result >> self.shift
+                } else {
+                    // Slow path: Overflow occurred, fall back to u128 for correctness.
+                    let wide = (total_cycles as u128) * (self.multiplier as u128);
+                    (wide >> self.shift) as u64
+                };
+                return final_ticks;
             }
-        } else {
-            // ISR ran → use post counters and refresh VAL to match them.
-            (wraps_post, self.get_syst() as u64)
-        };
-
-        // total_cycles = wraps*(reload+1) + (reload - final_val)
-        // This cannot overflow u64 in any realistic uptime.
-        let total_cycles = wraps_u64
-            .saturating_mul(reload + 1)
-            .saturating_add(reload - final_val_u64);
-
-        // Scale to ticks (e.g., microseconds) using precomputed multiplier and shift
-        let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
-        if !overflow {
-            result >> self.shift
-        } else {
-            // Slow path: Overflow occurred, fall back to u128 for correctness.
-            let wide = (total_cycles as u128) * (self.multiplier as u128);
-            (wide >> self.shift) as u64
+            // An interrupt occurred, invalidating our snapshot. Loop again.
         }
     }
 
     /// Returns the current SysTick counter value.
-    fn get_syst(&self) -> u32 {
+    pub fn get_syst(&self) -> u32 {
         #[cfg(test)]
         return self.current_systick.load(Ordering::SeqCst);
 
@@ -114,7 +120,7 @@ impl Timer {
     }
 
     #[inline(always)]
-    fn read_systick_countflag(&self) -> bool {
+    pub fn read_systick_countflag(&self) -> bool {
         #[cfg(test)]
         {
             return self
@@ -199,9 +205,27 @@ impl Timer {
         }
     }
 
+    /// Call this if you haven't already started the timer.
+    #[cfg(feature = "cortex-m")]
+    pub fn start(&self, syst: &mut cortex_m::peripheral::SYST) {
+        syst.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
+        syst.set_reload(self.reload_value);
+        syst.clear_current();
+        syst.enable_interrupt();
+        syst.enable_counter();
+    }
+}
+
+impl Timer {
     // -------- test-only helpers ----------
     #[cfg(test)]
     pub fn set_syst(&self, value: u32) {
+        debug_assert!(
+            value <= self.reload_value,
+            "set_syst: value {} exceeds reload {}",
+            value,
+            self.reload_value
+        );
         self.current_systick.store(value, Ordering::SeqCst);
     }
 
@@ -213,16 +237,6 @@ impl Timer {
     #[cfg(test)]
     pub fn set_after_v1_hook(&mut self, hook: Option<fn(&Timer)>) {
         self.after_v1_hook = hook;
-    }
-
-    /// Call this if you haven't already started the timer.
-    #[cfg(feature = "cortex-m")]
-    pub fn start(&self, syst: &mut cortex_m::peripheral::SYST) {
-        syst.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
-        syst.set_reload(self.reload_value);
-        syst.clear_current();
-        syst.enable_interrupt();
-        syst.enable_counter();
     }
 }
 
@@ -514,3 +528,6 @@ mod tests {
         assert_eq!(bug, 98, "old path under-counts due to stolen COUNTFLAG");
     }
 }
+
+#[cfg(test)]
+mod stress_test;
