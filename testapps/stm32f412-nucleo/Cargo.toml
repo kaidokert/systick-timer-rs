@@ -21,11 +21,13 @@ cortex-m-rt = "0.7"
 rtt-target = { version = "0.6", features = ["log"] }
 panic-rtt-target = { version = "0.2" }
 cortex-m-semihosting = "0.5"
-stm32f4xx-hal = { version = "0.23", features = ["stm32f412"] }
-
-systick-timer = { path = "../../systick-timer" }
 log = "0.4"
 critical-section = "1"
+
+# HAL crate
+stm32f4xx-hal = { version = "0.23", features = ["stm32f412"] }
+# Crate under test
+systick-timer = { path = "../../systick-timer" }
 
 [features]
 # Timer frequency configurations
@@ -60,8 +62,6 @@ priority-reverse = []   # TIM2&5 high, SysTick low (2,0,0)
 
 # Default features
 default = ["freq-50-50", "block-none", "duration-short", "reload-normal", "priority-equal"]
-
-[dev-dependencies]
 
 # cargo build/run
 [profile.dev]

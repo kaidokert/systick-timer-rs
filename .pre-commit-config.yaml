@@ -32,9 +32,15 @@ repos:
         language: system
         files: ^systick-timer/.*\.rs$
         pass_filenames: false
-    -   id: clippy-testapps
-        name: Clippy testapps
+    -   id: clippy-stm32f412-nucleo
+        name: Clippy stm32f412-nucleo
         entry: cargo clippy --manifest-path testapps/stm32f412-nucleo/Cargo.toml --no-default-features --bin timer_stress --target thumbv7em-none-eabihf -- -D warnings
+        language: system
+        files: ^testapps/.*\.rs$
+        pass_filenames: false
+    -   id: clippy-feather-m0-board
+        name: Clippy feather-m0-board
+        entry: cargo clippy --manifest-path testapps/feather-m0-board/Cargo.toml --no-default-features --bin timer_stress --target thumbv6m-none-eabi -- -D warnings
         language: system
         files: ^testapps/.*\.rs$
         pass_filenames: false

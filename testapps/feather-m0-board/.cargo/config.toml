@@ -1,0 +1,10 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --speed 1000 --chip ATSAMD21G18A"
+
+
+[build]
+target = "thumbv6m-none-eabi"    # Cortex-M0 and Cortex-M0+
+
+[alias]
+rb = "run --bin"
+rrb = "run --release --bin"
