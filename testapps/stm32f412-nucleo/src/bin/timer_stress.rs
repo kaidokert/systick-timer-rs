@@ -55,38 +55,38 @@ pub fn configure_interrupt_priorities() {
             set_systick_priority(1);
             set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
             set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
-        } else if cfg!(feature = "priority-shh") {
-            // SysTick high, TIM2&5 high (0,1,1)
+        } else if cfg!(feature = "priority-systick-high") {
+            // SysTick high, timers med (0,1,1)
             set_systick_priority(0);
             set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
             set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
-        } else if cfg!(feature = "priority-smh") {
-            // SysTick high, TIM2 med, TIM5 high (0,1,0)
-            set_systick_priority(0);
+        } else if cfg!(feature = "priority-timer1-high") {
+            // Timer1 high, others med (1,0,1)
+            set_systick_priority(1);
+            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 0);
+            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
+        } else if cfg!(feature = "priority-timer2-high") {
+            // Timer2 high, others med (1,1,0)
+            set_systick_priority(1);
             set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
             set_irq_prio_raw(hal::pac::Interrupt::TIM5, 0);
-        } else if cfg!(feature = "priority-shl") {
-            // SysTick high, TIM2 high, TIM5 low (0,0,2)
+        } else if cfg!(feature = "priority-mixed-1") {
+            // SysTick high, Timer1 high, Timer2 low (0,0,2)
             set_systick_priority(0);
             set_irq_prio_raw(hal::pac::Interrupt::TIM2, 0);
             set_irq_prio_raw(hal::pac::Interrupt::TIM5, 2);
-        } else if cfg!(feature = "priority-sml") {
-            // SysTick high, TIM2 med, TIM5 low (0,1,2)
+        } else if cfg!(feature = "priority-mixed-2") {
+            // SysTick high, Timer1 med, Timer2 low (0,1,2)
             set_systick_priority(0);
             set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
             set_irq_prio_raw(hal::pac::Interrupt::TIM5, 2);
-        } else if cfg!(feature = "priority-slm") {
-            // SysTick high, TIM2 low, TIM5 med (0,2,1)
+        } else if cfg!(feature = "priority-mixed-3") {
+            // SysTick high, Timer1 low, Timer2 med (0,2,1)
             set_systick_priority(0);
             set_irq_prio_raw(hal::pac::Interrupt::TIM2, 2);
             set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
-        } else if cfg!(feature = "priority-sll") {
-            // SysTick high, TIM2&5 low (0,2,2)
-            set_systick_priority(0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 2);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 2);
-        } else if cfg!(feature = "priority-reverse") {
-            // TIM2&5 high, SysTick low (2,0,0)
+        } else if cfg!(feature = "priority-timers-high") {
+            // Timers high, SysTick low (2,0,0)
             set_systick_priority(2);
             set_irq_prio_raw(hal::pac::Interrupt::TIM2, 0);
             set_irq_prio_raw(hal::pac::Interrupt::TIM5, 0);
@@ -114,20 +114,20 @@ fn main() -> ! {
     rprintln!("RTT Plus Test Starting with 100MHz clock...");
 
     // Report active configuration - use runtime detection
-    if cfg!(feature = "freq-50-49999") {
-        rprintln!("Frequency config: TIM2=50kHz, TIM5=49.999kHz");
-    } else if cfg!(feature = "freq-50-50001") {
-        rprintln!("Frequency config: TIM2=50kHz, TIM5=50.001kHz");
+    if cfg!(feature = "freq-target-below") {
+        rprintln!("Frequency config: Timer1=50kHz, Timer2=49.999kHz");
+    } else if cfg!(feature = "freq-target-above") {
+        rprintln!("Frequency config: Timer1=50kHz, Timer2=50.001kHz");
     } else {
-        rprintln!("Frequency config: TIM2=50kHz, TIM5=50kHz");
+        rprintln!("Frequency config: Timer1=50kHz, Timer2=50kHz");
     }
 
     if cfg!(feature = "block-both") {
-        rprintln!("Blocking config: Both use critical_section");
-    } else if cfg!(feature = "block-tim2") {
-        rprintln!("Blocking config: TIM2 uses critical_section");
-    } else if cfg!(feature = "block-tim5") {
-        rprintln!("Blocking config: TIM5 uses critical_section");
+        rprintln!("Blocking config: Both timers use critical_section");
+    } else if cfg!(feature = "block-timer1") {
+        rprintln!("Blocking config: Timer1 uses critical_section");
+    } else if cfg!(feature = "block-timer2") {
+        rprintln!("Blocking config: Timer2 uses critical_section");
     } else {
         rprintln!("Blocking config: No critical sections");
     }
@@ -146,23 +146,23 @@ fn main() -> ! {
 
     // Report interrupt priority configuration
     if cfg!(feature = "priority-equal") {
-        rprintln!("Priority config: All equal (SysTick=1, TIM2=1, TIM5=1)");
-    } else if cfg!(feature = "priority-shh") {
-        rprintln!("Priority config: SysTick high (SysTick=0, TIM2=1, TIM5=1)");
-    } else if cfg!(feature = "priority-smh") {
-        rprintln!("Priority config: SysTick high, mixed (SysTick=0, TIM2=1, TIM5=0)");
-    } else if cfg!(feature = "priority-shl") {
-        rprintln!("Priority config: SysTick high, mixed (SysTick=0, TIM2=0, TIM5=2)");
-    } else if cfg!(feature = "priority-sml") {
-        rprintln!("Priority config: SysTick high, mixed (SysTick=0, TIM2=1, TIM5=2)");
-    } else if cfg!(feature = "priority-slm") {
-        rprintln!("Priority config: SysTick high, mixed (SysTick=0, TIM2=2, TIM5=1)");
-    } else if cfg!(feature = "priority-sll") {
-        rprintln!("Priority config: SysTick high, others low (SysTick=0, TIM2=2, TIM5=2)");
-    } else if cfg!(feature = "priority-reverse") {
-        rprintln!("Priority config: TIM2&5 high, SysTick low (SysTick=2, TIM2=0, TIM5=0)");
+        rprintln!("Priority config: All equal (SysTick=1, Timer1=1, Timer2=1)");
+    } else if cfg!(feature = "priority-systick-high") {
+        rprintln!("Priority config: SysTick high (SysTick=0, Timer1=1, Timer2=1)");
+    } else if cfg!(feature = "priority-timer1-high") {
+        rprintln!("Priority config: Timer1 high (SysTick=1, Timer1=0, Timer2=1)");
+    } else if cfg!(feature = "priority-timer2-high") {
+        rprintln!("Priority config: Timer2 high (SysTick=1, Timer1=1, Timer2=0)");
+    } else if cfg!(feature = "priority-mixed-1") {
+        rprintln!("Priority config: SysTick high, mixed (SysTick=0, Timer1=0, Timer2=2)");
+    } else if cfg!(feature = "priority-mixed-2") {
+        rprintln!("Priority config: SysTick high, mixed (SysTick=0, Timer1=1, Timer2=2)");
+    } else if cfg!(feature = "priority-mixed-3") {
+        rprintln!("Priority config: SysTick high, mixed (SysTick=0, Timer1=2, Timer2=1)");
+    } else if cfg!(feature = "priority-timers-high") {
+        rprintln!("Priority config: Timers high, SysTick low (SysTick=2, Timer1=0, Timer2=0)");
     } else {
-        rprintln!("Priority config: Default equal (SysTick=1, TIM2=1, TIM5=1)");
+        rprintln!("Priority config: Default equal (SysTick=1, Timer1=1, Timer2=1)");
     }
 
     // Configure TIM2 frequency based on features
@@ -172,12 +172,12 @@ fn main() -> ! {
 
     // Configure TIM5 frequency based on features
     let mut tim5 = HalTimer::new(dp.TIM5, &mut rcc).counter_hz();
-    if cfg!(feature = "freq-50-49999") {
+    if cfg!(feature = "freq-target-below") {
         tim5.start(49_999.Hz()).unwrap();
-    } else if cfg!(feature = "freq-50-50001") {
+    } else if cfg!(feature = "freq-target-above") {
         tim5.start(50_001.Hz()).unwrap();
     } else {
-        // Default to freq-50-50
+        // Default to freq-target-target
         tim5.start(50.kHz()).unwrap();
     }
     tim5.listen(hal::timer::Event::Update);
@@ -326,12 +326,12 @@ fn TIM2() {
     TIM2_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     // Conditional critical section based on features
-    #[cfg(any(feature = "block-tim2", feature = "block-both"))]
+    #[cfg(any(feature = "block-timer1", feature = "block-both"))]
     critical_section::with(|_| {
         check_timer_monotonic(TimerId::TIM2, TIM2_LAST_NOW);
     });
 
-    #[cfg(not(any(feature = "block-tim2", feature = "block-both")))]
+    #[cfg(not(any(feature = "block-timer1", feature = "block-both")))]
     check_timer_monotonic(TimerId::TIM2, TIM2_LAST_NOW);
 
     unsafe {
@@ -348,12 +348,12 @@ fn TIM5() {
     TIM5_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     // Conditional critical section based on features
-    #[cfg(any(feature = "block-tim5", feature = "block-both"))]
+    #[cfg(any(feature = "block-timer2", feature = "block-both"))]
     critical_section::with(|_| {
         check_timer_monotonic(TimerId::TIM5, TIM5_LAST_NOW);
     });
 
-    #[cfg(not(any(feature = "block-tim5", feature = "block-both")))]
+    #[cfg(not(any(feature = "block-timer2", feature = "block-both")))]
     check_timer_monotonic(TimerId::TIM5, TIM5_LAST_NOW);
 
     unsafe {

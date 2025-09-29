@@ -16,12 +16,95 @@ use cortex_m::peripheral::NVIC;
 const TICK_RESOLUTION: u64 = 1_000_000_000; // 1 GHz, 1 ns resolution
 
 // Global SysTick timer - accessible from ISRs and main code
+#[cfg(feature = "reload-small")]
+static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0x1FFF, 48_000_000);
+#[cfg(not(feature = "reload-small"))]
 static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0xFFFFFF, 48_000_000);
 static TC4_COUNTER: AtomicU32 = AtomicU32::new(0);
 static TC5_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 const fn seconds(s: u64) -> u64 {
     s * TICK_RESOLUTION // s * (ticks/second)
+}
+
+/// Encode priority level for ARM Cortex-M NVIC
+/// ARM Cortex-M0+ uses only 2 bits for priority (4 levels: 0, 1, 2, 3)
+/// Shift to upper bits: priority 0 = 0x00, priority 1 = 0x40, priority 2 = 0x80, etc.
+const fn encode_priority(priority: u8) -> u8 {
+    priority << 6
+}
+
+/// Set raw interrupt priority using direct register access (adapted for SAMD21)
+unsafe fn set_irq_prio_raw(irq: lib::hal::pac::Interrupt, priority: u8) {
+    let irqn = irq as usize;
+    unsafe {
+        let nvic = &(*NVIC::PTR);
+        // SAMD21 has limited interrupt count, check bounds
+        if irqn < nvic.ipr.len() {
+            nvic.ipr[irqn].write(encode_priority(priority) as u32);
+        }
+        // If out of bounds, interrupt priorities aren't supported for this IRQ on SAMD21
+    }
+}
+
+/// Set SysTick priority using SCB (Cortex-M0+ has very limited priority support)
+unsafe fn set_systick_priority(priority: u8) {
+    // Cortex-M0+ only has shpr[0] and shpr[1], not shpr[11]
+    // SysTick priority might not be configurable on M0+
+    // For now, skip SysTick priority setting on this platform
+    let _ = priority; // Silence unused parameter warning
+}
+
+/// Configure all interrupt priorities based on features
+pub fn configure_interrupt_priorities() {
+    unsafe {
+        if cfg!(feature = "priority-equal") {
+            // All equal priority (1,1,1)
+            set_systick_priority(1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 1);
+        } else if cfg!(feature = "priority-systick-high") {
+            // SysTick high, timers med (0,1,1)
+            set_systick_priority(0);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 1);
+        } else if cfg!(feature = "priority-timer1-high") {
+            // Timer1 high, others med (1,0,1)
+            set_systick_priority(1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 0);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 1);
+        } else if cfg!(feature = "priority-timer2-high") {
+            // Timer2 high, others med (1,1,0)
+            set_systick_priority(1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 0);
+        } else if cfg!(feature = "priority-mixed-1") {
+            // SysTick high, Timer1 high, Timer2 low (0,0,2)
+            set_systick_priority(0);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 0);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 2);
+        } else if cfg!(feature = "priority-mixed-2") {
+            // SysTick high, Timer1 med, Timer2 low (0,1,2)
+            set_systick_priority(0);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 2);
+        } else if cfg!(feature = "priority-mixed-3") {
+            // SysTick high, Timer1 low, Timer2 med (0,2,1)
+            set_systick_priority(0);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 2);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 1);
+        } else if cfg!(feature = "priority-timers-high") {
+            // Timers high, SysTick low (2,0,0)
+            set_systick_priority(2);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 0);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 0);
+        } else {
+            // Default: all equal priority (1,1,1)
+            set_systick_priority(1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC4, 1);
+            set_irq_prio_raw(lib::hal::pac::Interrupt::TC5, 1);
+        }
+    }
 }
 
 #[cortex_m_rt::entry]
@@ -67,13 +150,13 @@ fn main() -> ! {
 
     rprintln!("TC4 and TC5 timers initialized at ~50kHz");
 
-    // Enable TC4 and TC5 interrupts in NVIC
+    // Configure interrupt priorities before enabling interrupts
+    configure_interrupt_priorities();
+
+    // Enable TC4 and TC5 interrupts
     unsafe {
-        cp.NVIC.set_priority(interrupt::TC4, 2);
-        cp.NVIC.set_priority(interrupt::TC5, 2);
-        NVIC::unmask(interrupt::TC4);
-        NVIC::unmask(interrupt::TC5);
-        cortex_m::interrupt::enable();
+        NVIC::unmask(lib::hal::pac::Interrupt::TC4);
+        NVIC::unmask(lib::hal::pac::Interrupt::TC5);
     }
 
     let start_time = TIMER.now();

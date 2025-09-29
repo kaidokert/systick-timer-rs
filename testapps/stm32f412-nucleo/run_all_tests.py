@@ -28,22 +28,23 @@ class TestResult:
     error: str = ""
 
 class TestRunner:
-    def __init__(self, specific_test_id: Optional[str] = None, release_mode: bool = True, include_invalid: bool = False):
+    def __init__(self, specific_test_id: Optional[str] = None, release_mode: bool = True, include_invalid: bool = False, build_only: bool = False):
         # Configuration options (mutually exclusive groups)
-        self.freq_options = ["freq-50-50", "freq-50-49999", "freq-50-50001"]
-        self.block_options = ["block-none", "block-tim2", "block-tim5", "block-both"]
+        self.freq_options = ["freq-target-target", "freq-target-below", "freq-target-above"]
+        self.block_options = ["block-none", "block-timer1", "block-timer2", "block-both"]
         self.duration_options = ["duration-short", "duration-full"]
         self.reload_options = ["reload-normal", "reload-small"]
-        self.priority_options = ["priority-equal", "priority-shh", "priority-smh", "priority-shl", "priority-sml", "priority-slm", "priority-sll", "priority-reverse"]
+        self.priority_options = ["priority-equal", "priority-systick-high", "priority-timer1-high", "priority-timer2-high", "priority-mixed-1", "priority-mixed-2", "priority-mixed-3", "priority-timers-high"]
 
         # Invalid configurations that violate design constraints
-        self.invalid_priorities = ["priority-reverse"]
+        self.invalid_priorities = ["priority-timers-high"]
 
         self.results: List[TestResult] = []
         self.failed_tests: List[TestResult] = []
         self.specific_test_id = specific_test_id
         self.release_mode = release_mode
         self.include_invalid = include_invalid
+        self.build_only = build_only
 
         # Create logs directory
         os.makedirs("logs", exist_ok=True)
@@ -119,11 +120,11 @@ class TestRunner:
         """Convert config tuple to short meaningful ID."""
         freq, block, duration, reload, priority = config
 
-        # Frequency mapping: 50-50 -> A, 50-49999 -> B, 50-50001 -> C
-        freq_map = {"freq-50-50": "A", "freq-50-49999": "B", "freq-50-50001": "C"}
+        # Frequency mapping: target-target -> A, target-below -> B, target-above -> C
+        freq_map = {"freq-target-target": "A", "freq-target-below": "B", "freq-target-above": "C"}
 
-        # Block mapping: none -> N, tim2 -> 2, tim5 -> 5, both -> B
-        block_map = {"block-none": "N", "block-tim2": "2", "block-tim5": "5", "block-both": "B"}
+        # Block mapping: none -> N, timer1 -> 1, timer2 -> 2, both -> B
+        block_map = {"block-none": "N", "block-timer1": "1", "block-timer2": "2", "block-both": "B"}
 
         # Duration mapping: short -> S, full -> F
         duration_map = {"duration-short": "S", "duration-full": "F"}
@@ -133,14 +134,14 @@ class TestRunner:
 
         # Priority mapping: compact single character codes
         priority_map = {
-            "priority-equal": "E",      # All equal
-            "priority-shh": "H",        # SysTick high, others high
-            "priority-smh": "M",        # SysTick high, mixed
-            "priority-shl": "L",        # SysTick high, mixed
-            "priority-sml": "Q",        # SysTick high, mixed
-            "priority-slm": "R",        # SysTick high, mixed
-            "priority-sll": "T",        # SysTick high, others low
-            "priority-reverse": "X"      # Reversed priorities
+            "priority-equal": "E",         # All equal
+            "priority-systick-high": "S",  # SysTick high, timers med
+            "priority-timer1-high": "1",   # Timer1 high, others med
+            "priority-timer2-high": "2",   # Timer2 high, others med
+            "priority-mixed-1": "M",       # SysTick high, Timer1 high, Timer2 low
+            "priority-mixed-2": "L",       # SysTick high, Timer1 med, Timer2 low
+            "priority-mixed-3": "R",       # SysTick high, Timer1 low, Timer2 med
+            "priority-timers-high": "X"     # Timers high, SysTick low (INVALID)
         }
 
         base_id = f"{freq_map[freq]}{block_map[block]}{duration_map[duration]}{reload_map[reload]}{priority_map[priority]}"
@@ -158,12 +159,19 @@ class TestRunner:
         else:
             self.logger.info(f"Testing: {config_str} [ID: {test_id}]")
 
-        # Single cargo run command (builds automatically if needed)
-        run_cmd = [
-            "cargo", "run", "--bin", "timer_stress",
-            "--no-default-features",
-            "--features", config_str
-        ]
+        # Command selection based on build_only flag
+        if self.build_only:
+            run_cmd = [
+                "cargo", "build", "--bin", "timer_stress",
+                "--no-default-features",
+                "--features", config_str
+            ]
+        else:
+            run_cmd = [
+                "cargo", "run", "--bin", "timer_stress",
+                "--no-default-features",
+                "--features", config_str
+            ]
         if self.release_mode:
             run_cmd.append("--release")
 
@@ -173,7 +181,10 @@ class TestRunner:
         result = TestResult(config_str, test_id, False, 0.0, log_filename)
 
         try:
-            self.logger.info("  Running test...")
+            if self.build_only:
+                self.logger.info("  Building configuration...")
+            else:
+                self.logger.info("  Running test...")
             self.logger.info(f"    Command: {' '.join(run_cmd)}")
 
             # Run phase with real-time output streaming
@@ -258,18 +269,30 @@ class TestRunner:
                 self.logger.warning(f"  Failed to save log file: {e}")
 
             # Check for success indicators
-            if ("Test completed" in result.output and
-                "Timer monotonic violation" not in result.output and
-                return_code == 0):
-                result.success = True
-                self.logger.info(f"  SUCCESS ({result.duration:.1f}s)")
+            if self.build_only:
+                # For build-only, success is just a clean build
+                if return_code == 0:
+                    result.success = True
+                    self.logger.info(f"  BUILD SUCCESS ({result.duration:.1f}s)")
+                else:
+                    result.success = False
+                    self.logger.warning(f"  BUILD FAILED ({result.duration:.1f}s)")
+                    if return_code != 0:
+                        self.logger.warning(f"    Non-zero exit code: {return_code}")
             else:
-                self.logger.warning(f"  COMPLETED WITH WARNINGS ({result.duration:.1f}s)")
-                if "Timer monotonic violation" in result.output:
-                    self.logger.warning("    Monotonic violation detected!")
-                if return_code != 0:
-                    self.logger.warning(f"    Non-zero exit code: {return_code}")
-                result.success = False
+                # For run mode, check for test completion
+                if ("Test completed" in result.output and
+                    "Timer monotonic violation" not in result.output and
+                    return_code == 0):
+                    result.success = True
+                    self.logger.info(f"  SUCCESS ({result.duration:.1f}s)")
+                else:
+                    self.logger.warning(f"  COMPLETED WITH WARNINGS ({result.duration:.1f}s)")
+                    if "Timer monotonic violation" in result.output:
+                        self.logger.warning("    Monotonic violation detected!")
+                    if return_code != 0:
+                        self.logger.warning(f"    Non-zero exit code: {return_code}")
+                    result.success = False
 
         except subprocess.TimeoutExpired as e:
             result.duration = time.time() - start_time
@@ -353,7 +376,7 @@ class TestRunner:
             build_mode = "release" if self.release_mode else "debug"
             if not self.release_mode:
                 self.logger.info(f"Debug mode: Excluding blocking configs (critical_section overhead causes ISR starvation)")
-            self.logger.info(f"Always excluded: priority-reverse (violates design constraints in {build_mode} mode)")
+            self.logger.info(f"Always excluded: priority-timers-high (violates design constraints in {build_mode} mode)")
 
         # Sort to run short-duration tests first
         all_configs.sort(key=lambda x: (
@@ -427,16 +450,16 @@ def main():
         description="STM32F412 Nucleo Systick Timer - Comprehensive Test Runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Test ID Format: [FREQ][BLOCK][DURATION][RELOAD][PRIORITY]
-  FREQ: A=50-50, B=50-49999, C=50-50001
-  BLOCK: N=none, 2=tim2, 5=tim5, B=both
+  FREQ: A=target-target, B=target-below, C=target-above
+  BLOCK: N=none, 1=timer1, 2=timer2, B=both
   DURATION: S=short, F=full
   RELOAD: N=normal, S=small
-  PRIORITY: E=equal, H=systick-high, M/L/Q/R=mixed, T=systick-high-others-low, X=reverse (INVALID)
+  PRIORITY: E=equal, S=systick-high, 1=timer1-high, 2=timer2-high, M/L/R=mixed, X=timers-high (INVALID)
 
 Examples:
-  ANSNE = freq-50-50,block-none,duration-short,reload-normal,priority-equal
-  BFFSX = freq-50-49999,block-both,duration-full,reload-small,priority-reverse (INVALID - skipped by default)
-  CBSNH = freq-50-50001,block-both,duration-short,reload-normal,priority-shh
+  ANSNE = freq-target-target,block-none,duration-short,reload-normal,priority-equal
+  BFFSX = freq-target-below,block-both,duration-full,reload-small,priority-timers-high (INVALID - skipped by default)
+  CBSNS = freq-target-above,block-both,duration-short,reload-normal,priority-systick-high
 
 Total combinations: 3×4×2×2×8 = 384 tests
 Valid combinations (release mode default): 3×4×2×2×7 = 336 tests
@@ -461,7 +484,12 @@ Invalid configurations are skipped by default. Use --include-invalid to test the
     parser.add_argument(
         "--include-invalid",
         action="store_true",
-        help="Include invalid configurations that violate design constraints (e.g., priority-reverse)"
+        help="Include invalid configurations that violate design constraints (e.g., priority-timers-high)"
+    )
+    parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help="Only build configurations, don't run tests (faster verification of all combinations)"
     )
 
     args = parser.parse_args()
@@ -480,7 +508,7 @@ Invalid configurations are skipped by default. Use --include-invalid to test the
         print("ERROR: Cargo.toml not found. Please run from testapps/stm32f412-nucleo directory")
         sys.exit(1)
 
-    runner = TestRunner(args.test_id, not args.debug, args.include_invalid)
+    runner = TestRunner(args.test_id, not args.debug, args.include_invalid, args.build_only)
 
     if args.list_tests:
         print("Available test IDs:")

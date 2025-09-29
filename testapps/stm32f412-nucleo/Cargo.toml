@@ -30,16 +30,16 @@ stm32f4xx-hal = { version = "0.23", features = ["stm32f412"] }
 systick-timer = { path = "../../systick-timer" }
 
 [features]
-# Timer frequency configurations
-freq-50-50 = []      # TIM2=50kHz, TIM5=50kHz (baseline)
-freq-50-49999 = []   # TIM2=50kHz, TIM5=49.999kHz
-freq-50-50001 = []   # TIM2=50kHz, TIM5=50.001kHz
+# Timer frequency configurations - STM32F412: 50kHz baseline
+freq-target-target = []  # Timer1=50kHz, Timer2=50kHz (baseline)
+freq-target-below = []   # Timer1=50kHz, Timer2=49.999kHz
+freq-target-above = []   # Timer1=50kHz, Timer2=50.001kHz
 
 # Interrupt blocking configurations
 block-none = []      # No critical sections (current state)
-block-tim2 = []      # TIM2 uses critical_section when calling timer
-block-tim5 = []      # TIM5 uses critical_section when calling timer
-block-both = []      # Both TIM2 and TIM5 use critical_section
+block-timer1 = []    # Timer1 (TIM2) uses critical_section when calling systick
+block-timer2 = []    # Timer2 (TIM5) uses critical_section when calling systick
+block-both = []      # Both timers use critical_section
 
 # Test duration configurations
 duration-short = []  # 5 second test (quick verification)
@@ -49,19 +49,18 @@ duration-full = []   # 45+ second test (catch 64-bit overflow issues)
 reload-normal = []   # 0xFFFFFF reload (~51 hours to overflow)
 reload-small = []    # 0x3FF reload (~40 seconds to overflow at 100MHz)
 
-# Interrupt priority configurations (8 possible combinations)
-# Format: priority-[SYSTICK][TIM2][TIM5] where H=High(0), M=Medium(1), L=Low(2)
-priority-equal = []     # All equal priority (1,1,1) - default behavior
-priority-shh = []       # SysTick high, TIM2&5 high (0,1,1)
-priority-smh = []       # SysTick high, TIM2 med, TIM5 high (0,1,0)
-priority-shl = []       # SysTick high, TIM2 high, TIM5 low (0,0,2)
-priority-sml = []       # SysTick high, TIM2 med, TIM5 low (0,1,2)
-priority-slm = []       # SysTick high, TIM2 low, TIM5 med (0,2,1)
-priority-sll = []       # SysTick high, TIM2&5 low (0,2,2)
-priority-reverse = []   # TIM2&5 high, SysTick low (2,0,0)
+# Interrupt priority configurations
+priority-equal = []         # All equal priority (1,1,1) - default behavior
+priority-systick-high = []  # SysTick higher than timers (0,1,1)
+priority-timer1-high = []   # Timer1 highest priority (1,0,1)
+priority-timer2-high = []   # Timer2 highest priority (1,1,0)
+priority-mixed-1 = []       # SysTick high, Timer1 high, Timer2 low (0,0,2)
+priority-mixed-2 = []       # SysTick high, Timer1 med, Timer2 low (0,1,2)
+priority-mixed-3 = []       # SysTick high, Timer1 low, Timer2 med (0,2,1)
+priority-timers-high = []   # Both timers higher than SysTick (2,0,0)
 
 # Default features
-default = ["freq-50-50", "block-none", "duration-short", "reload-normal", "priority-equal"]
+default = ["freq-target-target", "block-none", "duration-short", "reload-normal", "priority-equal"]
 
 # cargo build/run
 [profile.dev]
