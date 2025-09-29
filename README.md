@@ -11,6 +11,17 @@ and [cortex-m-rt](https://crates.io/crates/cortex-m-rt) crates.
 
 Optionally wraps this in an [embassy-time-driver](https://crates.io/crates/embassy-time-driver).
 
+## ⚠️ Critical Design Constraint
+
+**The SysTick ISR must not be starved for more than one wrap period.**
+
+This timer implementation is designed to handle exactly **one missed SysTick wrap** through its PendST bit detection mechanism. If the SysTick ISR is delayed by higher-priority interrupts for more than one complete wrap period, monotonic time violations **will occur**.
+
+**Reminders:**
+- Keep the SysTick ISR at high priority relative to application interrupts
+- Ensure critical sections in higher-priority ISRs are brief, e.g. well shorter than SysTick reload interval
+
+
 [Examples included](https://github.com/kaidokert/systick-timer-rs/tree/main/examples) for QEMU Cortex-M0.
 
 To run the demos with QEMU:

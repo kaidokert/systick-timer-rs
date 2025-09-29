@@ -22,8 +22,6 @@ pub struct Timer {
     #[cfg(test)]
     after_v1_hook: Option<fn(&Timer)>, // injected nested call site
     #[cfg(test)]
-    hook_enabled: AtomicBool, // guard to avoid recursion
-    #[cfg(test)]
     pendst_is_pending: AtomicBool, // emulated SCB->ICSR PENDSTSET bit
 }
 
@@ -48,18 +46,20 @@ impl Timer {
         }
     }
 
-    /// Interrupt handler for nested interrupts.
-    ///
-    /// Call this instead of systick_handler from the interrupt handler, if
-    /// you have nested interrupts enabled.
-    #[cfg(feature = "cortex-m")]
-    pub fn systick_interrupt_for_nested(&self) {
-        cortex_m::interrupt::free(|_| {
-            self.systick_handler();
-        })
-    }
-
     /// Robust `now()` (VAL-jump tie-breaker, no COUNTFLAG dependency).
+    ///
+    /// ## Design: One-Wrap Compensation via PendST Detection
+    /// This implementation is designed to handle exactly **one missed SysTick wrap**.
+    ///
+    /// **How it works:**
+    /// 1. Uses PendST bit to detect when the SysTick ISR is pending (hardware wrapped but ISR hasn't run)
+    /// 2. If PendST is set, adds +1 to the wrap count to compensate for the missed wrap
+    /// 3. This allows monotonic time even when the ISR is delayed by up to one full wrap period
+    ///
+    /// **Design limit:**
+    /// If the SysTick ISR is starved for MORE than one complete wrap period, this compensation
+    /// becomes insufficient and monotonic violations occur. The ISR starvation detection logic
+    /// in `diagnose_timing_violation()` identifies these as catastrophic "N+1 missed wraps".
     pub fn now(&self) -> u64 {
         let reload = self.reload_value as u64;
 
@@ -91,12 +91,22 @@ impl Timer {
             // If we're here, we have a consistent snapshot.
             // `is_pending` definitively tells us if we need to account for a wrap
             // that `wraps_pre` doesn't know about yet.
-            let wraps_u64 = if is_pending { wraps_pre + 1 } else { wraps_pre };
+            //
+            // KEY DESIGN DECISION: This +1 compensation handles exactly ONE missed wrap.
+            // If the ISR is starved for 2+ wrap periods, we get monotonic violations.
+            let (wraps_u64, final_val) = if is_pending {
+                // PendST is set - a wrap occurred after we read wraps but before we read val.
+                // Re-read VAL to get a fresh post-wrap value, avoiding stale pre-wrap VAL.
+                let fresh_val = self.get_syst() as u64;
+                (wraps_pre + 1, fresh_val)
+            } else {
+                (wraps_pre, val)
+            };
 
             // Calculate final time.
             let total_cycles = wraps_u64
                 .saturating_mul(reload + 1)
-                .saturating_add(reload - val);
+                .saturating_add(reload - final_val);
 
             // Scale to ticks.
             let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
@@ -106,67 +116,6 @@ impl Timer {
                 let wide = (total_cycles as u128) * (self.multiplier as u128);
                 return (wide >> self.shift) as u64;
             }
-        }
-    }
-
-    /// OLD, buggy COUNTFLAG tie-breaker kept only for tests
-    #[cfg(test)]
-    pub fn now_old(&self) -> u64 {
-        let reload = self.reload_value as u64;
-
-        loop {
-            // 1) SW counters (pre)
-            let in1 = self.inner_wraps.load(Ordering::SeqCst) as u64;
-            let out1 = self.outer_wraps.load(Ordering::SeqCst) as u64;
-            let wraps_pre = (out1 << 32) | in1;
-
-            // 2) HW down-counter and COUNTFLAG
-            let final_val = self.get_syst() as u64;
-
-            // ---- test-only hook (simulate nested now() that may clear COUNTFLAG) ----
-            if self.hook_enabled.swap(false, Ordering::SeqCst) {
-                if let Some(h) = self.after_v1_hook {
-                    (h)(self);
-                }
-                self.hook_enabled.store(true, Ordering::SeqCst);
-            }
-            // ------------------------------------------------------------------------
-
-            let has_wrapped = self.read_systick_countflag();
-
-            // 3) SW counters (post)
-            let in2 = self.inner_wraps.load(Ordering::SeqCst) as u64;
-            let out2 = self.outer_wraps.load(Ordering::SeqCst) as u64;
-            let wraps_post = (out2 << 32) | in2;
-
-            if wraps_pre == wraps_post {
-                // No interrupt occurred between reading wraps_pre and wraps_post.
-                // This means our snapshot of (wraps_pre, final_val, has_wrapped) is consistent.
-                let wraps_u64 = if has_wrapped {
-                    // A wrap occurred right before we read the counter, but the ISR hasn't run yet.
-                    // We must account for this wrap ourselves.
-                    wraps_pre + 1
-                } else {
-                    wraps_pre
-                };
-
-                // total_cycles = wraps*(reload+1) + (reload - final_val)
-                let total_cycles = wraps_u64
-                    .saturating_mul(reload + 1)
-                    .saturating_add(reload - final_val);
-
-                // Scale to ticks (e.g., microseconds) using precomputed multiplier and shift
-                let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
-                let final_ticks = if !overflow {
-                    result >> self.shift
-                } else {
-                    // Slow path: Overflow occurred, fall back to u128 for correctness.
-                    let wide = (total_cycles as u128) * (self.multiplier as u128);
-                    (wide >> self.shift) as u64
-                };
-                return final_ticks;
-            }
-            // An interrupt occurred, invalidating our snapshot. Loop again.
         }
     }
 
@@ -236,7 +185,7 @@ impl Timer {
     ///
     /// * `tick_hz` - The desired output frequency in Hz (e.g., 1000 for millisecond ticks)
     /// * `reload_value` - The SysTick reload value. Must be between 1 and 2^24-1.
-    ///                    This determines how many cycles occur between interrupts.
+    ///   This determines how many cycles occur between interrupts.
     /// * `systick_freq` - The frequency of the SysTick counter in Hz (typically CPU frequency)
     ///
     /// # Panics
@@ -276,8 +225,6 @@ impl Timer {
             #[cfg(test)]
             after_v1_hook: None,
             #[cfg(test)]
-            hook_enabled: AtomicBool::new(true),
-            #[cfg(test)]
             pendst_is_pending: AtomicBool::new(false),
         }
     }
@@ -290,6 +237,46 @@ impl Timer {
         syst.clear_current();
         syst.enable_interrupt();
         syst.enable_counter();
+    }
+
+    /// Check if a time difference indicates ISR starvation beyond design limits.
+    ///
+    /// This timer implementation compensates for exactly one missed SysTick wrap using
+    /// the PendST bit detection mechanism. If the SysTick ISR is starved longer than
+    /// one complete wrap period, monotonic violations will occur.
+    ///
+    /// **Key insight**: A backwards jump of N wrap periods indicates N+1 total missed wraps,
+    /// because the implementation already compensated for the first missed wrap via PendST.
+    ///
+    /// Returns `Some(total_missed_wraps)` if the backwards jump matches the pattern of
+    /// ISR starvation (N+1 total missed wraps). Returns `None` for other timing issues.
+    pub fn diagnose_timing_violation(
+        &self,
+        current_time: u64,
+        previous_time: u64,
+        systick_freq: u64,
+    ) -> Option<u32> {
+        if current_time >= previous_time {
+            return None; // Not a backwards jump
+        }
+
+        let backwards_jump = previous_time - current_time;
+        let wrap_period_ns = ((self.reload_value as u64 + 1) * 1_000_000_000) / systick_freq;
+
+        // Check if backwards jump is close to N complete wrap periods
+        // If so, this indicates N+1 total missed wraps (since PendST already compensated for 1)
+        for observed_periods in 1..=3 {
+            let expected_jump = observed_periods * wrap_period_ns;
+            let tolerance = wrap_period_ns / 100; // 1% tolerance
+
+            if backwards_jump >= expected_jump.saturating_sub(tolerance)
+                && backwards_jump <= expected_jump + tolerance
+            {
+                return Some(observed_periods as u32 + 1); // +1 because PendST compensated for first wrap
+            }
+        }
+
+        None
     }
 }
 
