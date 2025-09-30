@@ -1,0 +1,41 @@
+[package]
+name = "timer_stress"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+systick-timer = { path = "../../systick-timer" }
+rtt-target = { version = "0.6", features = ["log"] }
+
+[features]
+# Timer frequency configurations (generic across platforms)
+freq-target-target = []  # Timer1=target, Timer2=target
+freq-target-below = []   # Timer1=target, Timer2=target-below
+freq-target-above = []   # Timer1=target, Timer2=target+above
+
+# Interrupt blocking configurations
+block-none = []      # No critical sections
+block-timer1 = []    # Timer1 uses critical_section when calling systick
+block-timer2 = []    # Timer2 uses critical_section when calling systick
+block-both = []      # Both timers use critical_section
+
+# Test duration configurations
+duration-short = []  # Short test (quick verification)
+duration-full = []   # Long test (catch timing edge cases)
+
+# Timer reload configurations (to accelerate overflow testing)
+reload-normal = []   # Normal reload value (~51 hours to overflow)
+reload-small = []    # Small reload (accelerated overflow testing)
+
+# Interrupt priority configurations
+priority-equal = []         # All equal priority - default behavior
+priority-systick-high = []  # SysTick higher than timers
+priority-timer1-high = []   # Timer1 highest priority
+priority-timer2-high = []   # Timer2 highest priority
+priority-mixed-1 = []       # SysTick high, Timer1 high, Timer2 low
+priority-mixed-2 = []       # SysTick high, Timer1 med, Timer2 low
+priority-mixed-3 = []       # SysTick high, Timer1 low, Timer2 med
+priority-timers-high = []   # Both timers higher than SysTick
+
+# Default features
+default = ["freq-target-target", "block-none", "duration-short", "reload-normal", "priority-equal"]

@@ -4,3 +4,4 @@ testapps/stm32f412-nucleo/logs/
 testapps/stm32f412-nucleo/dump/
 testapps/stm32f412-nucleo/*.log
 testapps/feather-m0-board/dump/
+testapps/logs/

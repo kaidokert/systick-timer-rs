@@ -71,13 +71,9 @@ impl Timer {
             let wraps_pre = (out1 << 32) | in1;
 
             // 2. Read the low-level hardware value.
-            let val = self.get_syst() as u64;
+            let val_before = self.get_syst() as u64;
 
-            // 3. Read the pending flag. This tells us if a wrap occurred *after*
-            //    we read the wrap counters but *before* we could read the value.
-            let is_pending = self.is_systick_pending();
-
-            // 4. Re-read the high-level state to detect if an ISR ran during our reads.
+            // 3. Re-read the high-level state to detect if an ISR ran during our reads.
             let in2 = self.inner_wraps.load(Ordering::SeqCst) as u64;
             let out2 = self.outer_wraps.load(Ordering::SeqCst) as u64;
             let wraps_post = (out2 << 32) | in2;
@@ -88,19 +84,36 @@ impl Timer {
                 continue;
             }
 
-            // If we're here, we have a consistent snapshot.
-            // `is_pending` definitively tells us if we need to account for a wrap
-            // that `wraps_pre` doesn't know about yet.
+            // If we're here, the wrap counters are stable, but we need to handle the race
+            // where PendST could have flipped after wraps_pre but before wraps_post.
+            // Re-sample both PendST and VAL now that we know the counters are consistent.
+            let is_pending = self.is_systick_pending();
+            let val_after = self.get_syst() as u64;
+
+            // Double-check that no ISR ran during our PendST/VAL re-sampling.
+            let in3 = self.inner_wraps.load(Ordering::SeqCst) as u64;
+            let out3 = self.outer_wraps.load(Ordering::SeqCst) as u64;
+            let wraps_final = (out3 << 32) | in3;
+
+            if wraps_final != wraps_pre {
+                // Wrap counters changed during our final reads - loop again
+                continue;
+            }
+
+            // Now we have a truly stable snapshot. Determine if a wrap occurred:
+            // 1. PendST is set (hardware detected a wrap)
+            // 2. VAL increased (SysTick counts down, so increase means wrap occurred)
+            let wrap_occurred = is_pending || val_after > val_before;
+
             //
             // KEY DESIGN DECISION: This +1 compensation handles exactly ONE missed wrap.
             // If the ISR is starved for 2+ wrap periods, we get monotonic violations.
-            let (wraps_u64, final_val) = if is_pending {
-                // PendST is set - a wrap occurred after we read wraps but before we read val.
-                // Re-read VAL to get a fresh post-wrap value, avoiding stale pre-wrap VAL.
-                let fresh_val = self.get_syst() as u64;
-                (wraps_pre + 1, fresh_val)
+            let (wraps_u64, final_val) = if wrap_occurred {
+                // A wrap occurred after we read wraps_pre. Use the post-wrap VAL reading.
+                (wraps_pre + 1, val_after)
             } else {
-                (wraps_pre, val)
+                // No wrap occurred. Use the most recent VAL reading for consistency.
+                (wraps_pre, val_after)
             };
 
             // Calculate final time.

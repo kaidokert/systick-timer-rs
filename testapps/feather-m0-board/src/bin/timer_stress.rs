@@ -12,14 +12,21 @@ use lib::hal::timer::TimerCounter;
 use lib::hal::time::Hertz;
 use lib::hal::timer_traits::InterruptDrivenTimer;
 use cortex_m::peripheral::NVIC;
+use timer_stress::{TimerId, check_timer_monotonic, report_configuration, get_test_duration_seconds};
 
 const TICK_RESOLUTION: u64 = 1_000_000_000; // 1 GHz, 1 ns resolution
+const CORE_FREQUENCY: u32 = 48_000_000; // SAMD21 at 48MHz
+
+// SAMD21-specific timer frequencies (15kHz baseline - appropriate for Cortex-M0+)
+const TIMER_TARGET_HZ: u32 = 15_000;
+const TIMER_BELOW_HZ: u32 = 14_999;
+const TIMER_ABOVE_HZ: u32 = 15_001;
 
 // Global SysTick timer - accessible from ISRs and main code
 #[cfg(feature = "reload-small")]
-static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0x1FFF, 48_000_000);
+static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0x1FFF, CORE_FREQUENCY as u64);
 #[cfg(not(feature = "reload-small"))]
-static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0xFFFFFF, 48_000_000);
+static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0xFFFFFF, CORE_FREQUENCY as u64);
 static TC4_COUNTER: AtomicU32 = AtomicU32::new(0);
 static TC5_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -130,25 +137,35 @@ fn main() -> ! {
 
     rprintln!("Hello from Feather M0 with Systick Timer!");
 
+    // Report active configuration
+    report_configuration();
+
     // Initialize the global SysTick timer
     TIMER.start(&mut cp.SYST);
-    rprintln!("SysTick timer initialized at 48MHz");
+    rprintln!("SysTick timer initialized at {}MHz", CORE_FREQUENCY / 1_000_000);
 
     // Initialize TC4 and TC5 timers for high-frequency interrupts (~50kHz like STM32)
     // Configure a clock for the TC4 and TC5 peripherals
     let tc45 = &clocks.tc4_tc5(&gclk0).unwrap();
 
-    // Initialize TC4 timer at 50kHz
+    // Initialize TC4 timer (Timer1) - always at target frequency
     let mut tc4_timer = TimerCounter::tc4_(tc45, dp.tc4, &mut dp.pm);
-    InterruptDrivenTimer::start(&mut tc4_timer, Hertz::Hz(50_000).into_duration());
+    InterruptDrivenTimer::start(&mut tc4_timer, Hertz::Hz(TIMER_TARGET_HZ).into_duration());
     tc4_timer.enable_interrupt();
 
-    // Initialize TC5 timer at 50kHz
+    // Initialize TC5 timer (Timer2) - frequency based on features
     let mut tc5_timer = TimerCounter::tc5_(tc45, dp.tc5, &mut dp.pm);
-    InterruptDrivenTimer::start(&mut tc5_timer, Hertz::Hz(50_000).into_duration());
+    let tc5_frequency = if cfg!(feature = "freq-target-below") {
+        TIMER_BELOW_HZ
+    } else if cfg!(feature = "freq-target-above") {
+        TIMER_ABOVE_HZ
+    } else {
+        TIMER_TARGET_HZ
+    };
+    InterruptDrivenTimer::start(&mut tc5_timer, Hertz::Hz(tc5_frequency).into_duration());
     tc5_timer.enable_interrupt();
 
-    rprintln!("TC4 and TC5 timers initialized at ~50kHz");
+    rprintln!("TC4 and TC5 timers initialized - TC4: {}Hz, TC5: {}Hz", TIMER_TARGET_HZ, tc5_frequency);
 
     // Configure interrupt priorities before enabling interrupts
     configure_interrupt_priorities();
@@ -164,10 +181,16 @@ fn main() -> ! {
     let mut iteration_count = 0u64;
 
     let one_second = seconds(1);
-    let test_duration = seconds(5); // 5 second test like STM32 version
+    // Use feature-based test duration, but override full duration for SAMD21
+    let duration_seconds = if cfg!(feature = "duration-full") {
+        30 // SAMD21 gets shorter full duration due to slower MCU
+    } else {
+        get_test_duration_seconds()
+    };
+    let test_duration = seconds(duration_seconds);
 
     rprintln!("Starting timer loop at: {}", start_time);
-    rprintln!("Test will run for 5 seconds");
+    rprintln!("Test will run for {} seconds", duration_seconds);
     rprintln!("one_second = {}, test_duration = {}", one_second, test_duration);
 
     loop {
@@ -216,14 +239,20 @@ fn SysTick() {
     TIMER.systick_handler();
 }
 
-// TC4 Timer Interrupt Handler
+// TC4 Timer Interrupt Handler (Timer1)
 #[interrupt]
 fn TC4() {
-    // Access global TIMER for timing measurements
-    let _now = TIMER.now();
-
-    // Increment counter for monitoring
+    static mut TC4_LAST_NOW: u64 = 0;
     TC4_COUNTER.store(TC4_COUNTER.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
+    // Conditional critical section based on features
+    #[cfg(any(feature = "block-timer1", feature = "block-both"))]
+    critical_section::with(|_| {
+        check_timer_monotonic(&TIMER, TimerId::Timer1, TC4_LAST_NOW, CORE_FREQUENCY);
+    });
+
+    #[cfg(not(any(feature = "block-timer1", feature = "block-both")))]
+    check_timer_monotonic(&TIMER, TimerId::Timer1, TC4_LAST_NOW, CORE_FREQUENCY);
 
     // Clear the overflow interrupt flag
     unsafe {
@@ -236,14 +265,20 @@ fn TC4() {
     }
 }
 
-// TC5 Timer Interrupt Handler
+// TC5 Timer Interrupt Handler (Timer2)
 #[interrupt]
 fn TC5() {
-    // Access global TIMER for timing measurements
-    let _now = TIMER.now();
-
-    // Increment counter for monitoring
+    static mut TC5_LAST_NOW: u64 = 0;
     TC5_COUNTER.store(TC5_COUNTER.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
+    // Conditional critical section based on features
+    #[cfg(any(feature = "block-timer2", feature = "block-both"))]
+    critical_section::with(|_| {
+        check_timer_monotonic(&TIMER, TimerId::Timer2, TC5_LAST_NOW, CORE_FREQUENCY);
+    });
+
+    #[cfg(not(any(feature = "block-timer2", feature = "block-both")))]
+    check_timer_monotonic(&TIMER, TimerId::Timer2, TC5_LAST_NOW, CORE_FREQUENCY);
 
     // Clear the overflow interrupt flag
     unsafe {

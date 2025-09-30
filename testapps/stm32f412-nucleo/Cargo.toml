@@ -28,36 +28,37 @@ critical-section = "1"
 stm32f4xx-hal = { version = "0.23", features = ["stm32f412"] }
 # Crate under test
 systick-timer = { path = "../../systick-timer" }
+timer_stress = { path = "../timer_stress", default-features = false }
 
 [features]
 # Timer frequency configurations - STM32F412: 50kHz baseline
-freq-target-target = []  # Timer1=50kHz, Timer2=50kHz (baseline)
-freq-target-below = []   # Timer1=50kHz, Timer2=49.999kHz
-freq-target-above = []   # Timer1=50kHz, Timer2=50.001kHz
+freq-target-target = ["timer_stress/freq-target-target"]  # Timer1=50kHz, Timer2=50kHz (baseline)
+freq-target-below = ["timer_stress/freq-target-below"]   # Timer1=50kHz, Timer2=49.999kHz
+freq-target-above = ["timer_stress/freq-target-above"]   # Timer1=50kHz, Timer2=50.001kHz
 
 # Interrupt blocking configurations
-block-none = []      # No critical sections (current state)
-block-timer1 = []    # Timer1 (TIM2) uses critical_section when calling systick
-block-timer2 = []    # Timer2 (TIM5) uses critical_section when calling systick
-block-both = []      # Both timers use critical_section
+block-none = ["timer_stress/block-none"]      # No critical sections (current state)
+block-timer1 = ["timer_stress/block-timer1"]    # Timer1 (TIM2) uses critical_section when calling systick
+block-timer2 = ["timer_stress/block-timer2"]    # Timer2 (TIM5) uses critical_section when calling systick
+block-both = ["timer_stress/block-both"]      # Both timers use critical_section
 
 # Test duration configurations
-duration-short = []  # 5 second test (quick verification)
-duration-full = []   # 45+ second test (catch 64-bit overflow issues)
+duration-short = ["timer_stress/duration-short"]  # 5 second test (quick verification)
+duration-full = ["timer_stress/duration-full"]   # 45+ second test (catch 64-bit overflow issues)
 
 # Timer reload configurations (to accelerate overflow testing)
-reload-normal = []   # 0xFFFFFF reload (~51 hours to overflow)
-reload-small = []    # 0x3FF reload (~40 seconds to overflow at 100MHz)
+reload-normal = ["timer_stress/reload-normal"]   # 0xFFFFFF reload (~51 hours to overflow)
+reload-small = ["timer_stress/reload-small"]    # 0x3FF reload (~40 seconds to overflow at 100MHz)
 
 # Interrupt priority configurations
-priority-equal = []         # All equal priority (1,1,1) - default behavior
-priority-systick-high = []  # SysTick higher than timers (0,1,1)
-priority-timer1-high = []   # Timer1 highest priority (1,0,1)
-priority-timer2-high = []   # Timer2 highest priority (1,1,0)
-priority-mixed-1 = []       # SysTick high, Timer1 high, Timer2 low (0,0,2)
-priority-mixed-2 = []       # SysTick high, Timer1 med, Timer2 low (0,1,2)
-priority-mixed-3 = []       # SysTick high, Timer1 low, Timer2 med (0,2,1)
-priority-timers-high = []   # Both timers higher than SysTick (2,0,0)
+priority-equal = ["timer_stress/priority-equal"]         # All equal priority (1,1,1) - default behavior
+priority-systick-high = ["timer_stress/priority-systick-high"]  # SysTick higher than timers (0,1,1)
+priority-timer1-high = ["timer_stress/priority-timer1-high"]   # Timer1 highest priority (1,0,1)
+priority-timer2-high = ["timer_stress/priority-timer2-high"]   # Timer2 highest priority (1,1,0)
+priority-mixed-1 = ["timer_stress/priority-mixed-1"]       # SysTick high, Timer1 high, Timer2 low (0,0,2)
+priority-mixed-2 = ["timer_stress/priority-mixed-2"]       # SysTick high, Timer1 med, Timer2 low (0,1,2)
+priority-mixed-3 = ["timer_stress/priority-mixed-3"]       # SysTick high, Timer1 low, Timer2 med (0,2,1)
+priority-timers-high = ["timer_stress/priority-timers-high"]   # Both timers higher than SysTick (2,0,0)
 
 # Default features
 default = ["freq-target-target", "block-none", "duration-short", "reload-normal", "priority-equal"]
