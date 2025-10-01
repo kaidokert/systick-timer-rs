@@ -5,7 +5,6 @@ name = "stm32f412-nucleo"
 edition = "2024"
 version = "0.1.0"
 
-
 [[bin]]
 name = "timer_stress"
 path = "src/bin/timer_stress.rs"
@@ -13,7 +12,6 @@ test = false
 
 [lib]
 harness = false
-
 
 [dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }

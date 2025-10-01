@@ -10,11 +10,6 @@ pub fn exit() -> ! {
     loop {}
 }
 
-/// Hardfault handler.
-///
-/// Terminates the application and makes a semihosting-capable debug tool exit
-/// with an error. This seems better than the default, which is to spin in a
-/// loop.
 #[cortex_m_rt::exception]
 unsafe fn HardFault(_frame: &cortex_m_rt::ExceptionFrame) -> ! {
     cortex_m_semihosting::debug::exit(cortex_m_semihosting::debug::EXIT_FAILURE);

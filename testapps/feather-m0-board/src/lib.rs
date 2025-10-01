@@ -1,8 +1,8 @@
 #![no_main]
 #![no_std]
 
-use panic_rtt_target as _;
-pub use feather_m0::hal; // HAL modules
+pub use feather_m0::hal;
+use panic_rtt_target as _; // HAL modules
 
 pub fn exit() -> ! {
     cortex_m_semihosting::debug::exit(cortex_m_semihosting::debug::EXIT_SUCCESS);

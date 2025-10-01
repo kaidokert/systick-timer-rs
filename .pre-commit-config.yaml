@@ -20,6 +20,12 @@ repos:
         language: system
         files: ^systick-timer/.*\.rs$
         pass_filenames: false
+    -   id: fmt-timer-stress
+        name: Format timer_stress crate
+        entry: cargo fmt --manifest-path testapps/timer_stress/Cargo.toml -- --check
+        language: system
+        files: ^testapps/timer_stress/.*\.rs$
+        pass_filenames: false
     -   id: fmt-testapps
         name: Format testapps
         entry: cargo fmt --manifest-path testapps/stm32f412-nucleo/Cargo.toml -- --check
@@ -31,6 +37,12 @@ repos:
         entry: cargo clippy --manifest-path systick-timer/Cargo.toml --no-default-features -- -D warnings
         language: system
         files: ^systick-timer/.*\.rs$
+        pass_filenames: false
+    -   id: clippy-timer-stress
+        name: Clippy timer_stress crate
+        entry: cargo clippy --manifest-path testapps/timer_stress/Cargo.toml --no-default-features -- -D warnings
+        language: system
+        files: ^testapps/timer_stress/.*\.rs$
         pass_filenames: false
     -   id: clippy-stm32f412-nucleo
         name: Clippy stm32f412-nucleo

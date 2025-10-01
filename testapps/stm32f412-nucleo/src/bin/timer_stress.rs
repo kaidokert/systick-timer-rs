@@ -9,15 +9,26 @@ use hal::rcc::Config;
 use lib::hal::{self, interrupt, prelude::*, timer::Timer as HalTimer};
 use rtt_target::{rprintln, rtt_init_log};
 use systick_timer::Timer;
+use timer_stress::{
+    TimerId, check_timer_monotonic, get_test_duration_seconds, report_configuration,
+};
 
 const TICK_RESOLUTION: u64 = 1_000_000_000; // 1 GHz, 1 ns resolution
+const CORE_FREQUENCY: u32 = 100_000_000;
+const FULL_TEST_DURATION_SECS: u64 = 50;
 
+// STM32F412-specific timer frequencies (50kHz baseline - appropriate for Cortex-M4)
+const TIMER_TARGET_HZ: u32 = 50_000;
+const TIMER_BELOW_HZ: u32 = 49_999;
+const TIMER_ABOVE_HZ: u32 = 50_001;
+
+// Global SysTick timer - accessible from ISRs and main code
 #[cfg(feature = "reload-small")]
-static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0x3FF, 100_000_000);
+static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0x3FF, CORE_FREQUENCY as u64);
 #[cfg(not(feature = "reload-small"))]
-static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0xFFFFFF, 100_000_000);
-static TIM2_COUNTER: AtomicU32 = AtomicU32::new(0);
-static TIM5_COUNTER: AtomicU32 = AtomicU32::new(0);
+static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0xFFFFFF, CORE_FREQUENCY as u64);
+static TIMER1_COUNTER: AtomicU32 = AtomicU32::new(0);
+static TIMER2_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 const fn seconds(s: u64) -> u64 {
     s * TICK_RESOLUTION // s * (ticks/second)
@@ -48,53 +59,56 @@ unsafe fn set_systick_priority(priority: u8) {
 }
 
 /// Configure all interrupt priorities based on features
-pub fn configure_interrupt_priorities() {
+pub fn configure_interrupt_priorities(
+    tim1_interrupt: hal::pac::Interrupt,
+    tim2_interrupt: hal::pac::Interrupt,
+) {
     unsafe {
         if cfg!(feature = "priority-equal") {
             // All equal priority (1,1,1)
             set_systick_priority(1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
+            set_irq_prio_raw(tim1_interrupt, 1);
+            set_irq_prio_raw(tim2_interrupt, 1);
         } else if cfg!(feature = "priority-systick-high") {
             // SysTick high, timers med (0,1,1)
             set_systick_priority(0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
+            set_irq_prio_raw(tim1_interrupt, 1);
+            set_irq_prio_raw(tim2_interrupt, 1);
         } else if cfg!(feature = "priority-timer1-high") {
             // Timer1 high, others med (1,0,1)
             set_systick_priority(1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
+            set_irq_prio_raw(tim1_interrupt, 0);
+            set_irq_prio_raw(tim2_interrupt, 1);
         } else if cfg!(feature = "priority-timer2-high") {
             // Timer2 high, others med (1,1,0)
             set_systick_priority(1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 0);
+            set_irq_prio_raw(tim1_interrupt, 1);
+            set_irq_prio_raw(tim2_interrupt, 0);
         } else if cfg!(feature = "priority-mixed-1") {
             // SysTick high, Timer1 high, Timer2 low (0,0,2)
             set_systick_priority(0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 2);
+            set_irq_prio_raw(tim1_interrupt, 0);
+            set_irq_prio_raw(tim2_interrupt, 2);
         } else if cfg!(feature = "priority-mixed-2") {
             // SysTick high, Timer1 med, Timer2 low (0,1,2)
             set_systick_priority(0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 2);
+            set_irq_prio_raw(tim1_interrupt, 1);
+            set_irq_prio_raw(tim2_interrupt, 2);
         } else if cfg!(feature = "priority-mixed-3") {
             // SysTick high, Timer1 low, Timer2 med (0,2,1)
             set_systick_priority(0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 2);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
+            set_irq_prio_raw(tim1_interrupt, 2);
+            set_irq_prio_raw(tim2_interrupt, 1);
         } else if cfg!(feature = "priority-timers-high") {
             // Timers high, SysTick low (2,0,0)
             set_systick_priority(2);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 0);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 0);
+            set_irq_prio_raw(tim1_interrupt, 0);
+            set_irq_prio_raw(tim2_interrupt, 0);
         } else {
             // Default: all equal priority (1,1,1)
             set_systick_priority(1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM2, 1);
-            set_irq_prio_raw(hal::pac::Interrupt::TIM5, 1);
+            set_irq_prio_raw(tim1_interrupt, 1);
+            set_irq_prio_raw(tim2_interrupt, 1);
         }
     }
 }
@@ -111,107 +125,72 @@ fn main() -> ! {
         1024
     );
 
-    rprintln!("RTT Plus Test Starting with 100MHz clock...");
+    rprintln!("Hello from STM32F412 with Systick Timer !");
 
-    // Report active configuration - use runtime detection
-    if cfg!(feature = "freq-target-below") {
-        rprintln!("Frequency config: Timer1=50kHz, Timer2=49.999kHz");
-    } else if cfg!(feature = "freq-target-above") {
-        rprintln!("Frequency config: Timer1=50kHz, Timer2=50.001kHz");
-    } else {
-        rprintln!("Frequency config: Timer1=50kHz, Timer2=50kHz");
-    }
+    // Report active configuration
+    report_configuration();
 
-    if cfg!(feature = "block-both") {
-        rprintln!("Blocking config: Both timers use critical_section");
-    } else if cfg!(feature = "block-timer1") {
-        rprintln!("Blocking config: Timer1 uses critical_section");
-    } else if cfg!(feature = "block-timer2") {
-        rprintln!("Blocking config: Timer2 uses critical_section");
-    } else {
-        rprintln!("Blocking config: No critical sections");
-    }
-
-    if cfg!(feature = "duration-full") {
-        rprintln!("Duration config: 45+ second test (overflow detection)");
-    } else {
-        rprintln!("Duration config: 5 second test");
-    }
-
-    if cfg!(feature = "reload-small") {
-        rprintln!("Reload config: Small (0x3FF, ~40s to overflow)");
-    } else {
-        rprintln!("Reload config: Normal (0xFFFFFF, ~51h to overflow)");
-    }
-
-    // Report interrupt priority configuration
-    if cfg!(feature = "priority-equal") {
-        rprintln!("Priority config: All equal (SysTick=1, Timer1=1, Timer2=1)");
-    } else if cfg!(feature = "priority-systick-high") {
-        rprintln!("Priority config: SysTick high (SysTick=0, Timer1=1, Timer2=1)");
-    } else if cfg!(feature = "priority-timer1-high") {
-        rprintln!("Priority config: Timer1 high (SysTick=1, Timer1=0, Timer2=1)");
-    } else if cfg!(feature = "priority-timer2-high") {
-        rprintln!("Priority config: Timer2 high (SysTick=1, Timer1=1, Timer2=0)");
-    } else if cfg!(feature = "priority-mixed-1") {
-        rprintln!("Priority config: SysTick high, mixed (SysTick=0, Timer1=0, Timer2=2)");
-    } else if cfg!(feature = "priority-mixed-2") {
-        rprintln!("Priority config: SysTick high, mixed (SysTick=0, Timer1=1, Timer2=2)");
-    } else if cfg!(feature = "priority-mixed-3") {
-        rprintln!("Priority config: SysTick high, mixed (SysTick=0, Timer1=2, Timer2=1)");
-    } else if cfg!(feature = "priority-timers-high") {
-        rprintln!("Priority config: Timers high, SysTick low (SysTick=2, Timer1=0, Timer2=0)");
-    } else {
-        rprintln!("Priority config: Default equal (SysTick=1, Timer1=1, Timer2=1)");
-    }
+    // Initialize the global SysTick timer
+    TIMER.start(&mut cp.SYST);
+    rprintln!(
+        "SysTick timer initialized at {}MHz",
+        CORE_FREQUENCY / 1_000_000
+    );
 
     // Configure TIM2 frequency based on features
     let mut tim2 = HalTimer::new(dp.TIM2, &mut rcc).counter_hz();
-    tim2.start(50.kHz()).unwrap();
+    tim2.start(TIMER_TARGET_HZ.Hz()).unwrap();
     tim2.listen(hal::timer::Event::Update);
 
     // Configure TIM5 frequency based on features
     let mut tim5 = HalTimer::new(dp.TIM5, &mut rcc).counter_hz();
-    if cfg!(feature = "freq-target-below") {
-        tim5.start(49_999.Hz()).unwrap();
+    let tim5_frequency = if cfg!(feature = "freq-target-below") {
+        TIMER_BELOW_HZ
     } else if cfg!(feature = "freq-target-above") {
-        tim5.start(50_001.Hz()).unwrap();
+        TIMER_ABOVE_HZ
     } else {
-        // Default to freq-target-target
-        tim5.start(50.kHz()).unwrap();
-    }
+        TIMER_TARGET_HZ
+    };
+    tim5.start(tim5_frequency.Hz()).unwrap();
     tim5.listen(hal::timer::Event::Update);
 
+    rprintln!(
+        "TIM2 and TIM5 timers initialized - TIM2: {}Hz, TIM5: {}Hz",
+        TIMER_TARGET_HZ,
+        tim5_frequency
+    );
+
     // Configure interrupt priorities before enabling interrupts
-    configure_interrupt_priorities();
+    configure_interrupt_priorities(hal::pac::Interrupt::TIM2, hal::pac::Interrupt::TIM5);
 
     // Enable TIM2 and TIM5 interrupts
     unsafe {
-        cortex_m::peripheral::NVIC::unmask(hal::pac::Interrupt::TIM2);
-        cortex_m::peripheral::NVIC::unmask(hal::pac::Interrupt::TIM5);
+        NVIC::unmask(hal::pac::Interrupt::TIM2);
+        NVIC::unmask(hal::pac::Interrupt::TIM5);
     }
-
-    TIMER.start(&mut cp.SYST);
-    rprintln!("All timers started");
 
     let start_time = TIMER.now();
     let mut last_log_time = start_time;
-    let mut iteration_count = 0;
+    let mut iteration_count = 0u64;
     let one_second = seconds(1);
 
-    let test_duration = if cfg!(feature = "duration-full") {
-        seconds(50) // Go past 40s overflow point
-    } else {
-        seconds(5) // Default to short duration
-    };
+    let duration_secs = get_test_duration_seconds(FULL_TEST_DURATION_SECS);
+    let test_duration = seconds(duration_secs);
 
     rprintln!("Starting timer loop at: {}", start_time);
-
     if cfg!(feature = "duration-full") {
-        rprintln!("Test will run for 50 seconds (targeting 64-bit overflow at ~40s)");
+        rprintln!(
+            "Test will run for {} seconds (targeting 64-bit overflow)",
+            duration_secs
+        );
     } else {
-        rprintln!("Test will run for 5 seconds");
+        rprintln!("Test will run for {} seconds", duration_secs);
     }
+    rprintln!(
+        "one_second = {}, test_duration = {}",
+        one_second,
+        test_duration
+    );
 
     loop {
         let current_time = TIMER.now();
@@ -219,13 +198,13 @@ fn main() -> ! {
 
         // Log status every second
         if current_time - last_log_time >= one_second {
-            let tim2_count = TIM2_COUNTER.load(Ordering::Relaxed);
-            let tim5_count = TIM5_COUNTER.load(Ordering::Relaxed);
+            let t1_count = TIMER1_COUNTER.load(Ordering::Relaxed);
+            let t2_count = TIMER2_COUNTER.load(Ordering::Relaxed);
             rprintln!(
-                "Elapsed: {}s, TIM2: {} ticks, TIM5: {} ticks, iterations: {}",
+                "Elapsed: {}s, T1: {} ticks, T2: {} ticks, iterations: {}",
                 elapsed_ns / 1_000_000_000,
-                tim2_count,
-                tim5_count,
+                t1_count,
+                t2_count,
                 iteration_count
             );
             last_log_time = current_time;
@@ -233,106 +212,47 @@ fn main() -> ! {
 
         // Exit after test duration
         if elapsed_ns >= test_duration {
-            if cfg!(feature = "duration-full") {
-                rprintln!(
-                    "Test completed after 50.000s, total iterations: {}",
-                    iteration_count
-                );
-            } else {
-                rprintln!(
-                    "Test completed after 5.000s, total iterations: {}",
-                    iteration_count
-                );
-            }
+            let t1_final = TIMER1_COUNTER.load(Ordering::Relaxed);
+            let t2_final = TIMER2_COUNTER.load(Ordering::Relaxed);
+            rprintln!(
+                "Test completed after {:.3}s, total iterations: {}",
+                duration_secs,
+                iteration_count
+            );
+            rprintln!(
+                "Final stats - TIMER1: {} ticks, TIMER2: {} ticks",
+                t1_final,
+                t2_final
+            );
             break;
         }
 
         iteration_count += 1;
-        // asm::wfi();
     }
 
     stm32f412_nucleo::exit()
 }
 
+// SysTick Timer Interrupt Handler
 #[cortex_m_rt::exception]
 fn SysTick() {
     TIMER.systick_handler();
 }
 
-enum TimerId {
-    TIM2,
-    TIM5,
-}
-impl From<TimerId> for &'static str {
-    fn from(val: TimerId) -> Self {
-        match val {
-            TimerId::TIM2 => "TIM2",
-            TimerId::TIM5 => "TIM5",
-        }
-    }
-}
-
-fn check_timer_monotonic<T: Into<TimerId>>(timer_id: T, last_now: &mut u64) {
-    let timer_name: &'static str = timer_id.into().into();
-    let now = TIMER.now();
-    if now < *last_now {
-        // Diagnose the type of timing violation
-        if let Some(total_missed_wraps) =
-            TIMER.diagnose_timing_violation(now, *last_now, 100_000_000)
-        {
-            let observed_periods = total_missed_wraps - 1; // Subtract the 1 that PendST compensated for
-            rprintln!(
-                "Timer {} CATASTROPHIC ISR STARVATION: {} < {} (backwards jump = {} wrap periods)",
-                timer_name,
-                now,
-                *last_now,
-                observed_periods
-            );
-            rprintln!(
-                "CAUSE: SysTick ISR was starved for {} TOTAL missed wraps (~{:.1}ms each wrap period)",
-                total_missed_wraps,
-                167.77
-            );
-            rprintln!(
-                "ANALYSIS: Implementation compensated for 1 missed wrap via PendST, but {} additional wraps were missed",
-                observed_periods
-            );
-            rprintln!(
-                "SOLUTION: This is CATASTROPHIC - increase SysTick priority or reduce critical section durations"
-            );
-            panic!(
-                "CATASTROPHIC ISR starvation - {} total missed wraps (design limit exceeded)",
-                total_missed_wraps
-            );
-        } else {
-            rprintln!(
-                "Timer {} monotonic violation: {} < {} (unknown cause)",
-                timer_name,
-                now,
-                *last_now
-            );
-            panic!(
-                "Timer monotonic violation: {} < {} (unknown cause)",
-                now, *last_now
-            );
-        }
-    }
-    *last_now = now;
-}
-
+// TIM2 Timer Interrupt Handler (Timer1)
 #[hal::interrupt]
 fn TIM2() {
-    static mut TIM2_LAST_NOW: u64 = 0;
-    TIM2_COUNTER.fetch_add(1, Ordering::Relaxed);
+    static mut TIMER1_LAST_NOW: u64 = 0;
+    TIMER1_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     // Conditional critical section based on features
     #[cfg(any(feature = "block-timer1", feature = "block-both"))]
     critical_section::with(|_| {
-        check_timer_monotonic(TimerId::TIM2, TIM2_LAST_NOW);
+        check_timer_monotonic(&TIMER, TimerId::Timer1, TIMER1_LAST_NOW, CORE_FREQUENCY);
     });
 
     #[cfg(not(any(feature = "block-timer1", feature = "block-both")))]
-    check_timer_monotonic(TimerId::TIM2, TIM2_LAST_NOW);
+    check_timer_monotonic(&TIMER, TimerId::Timer1, TIMER1_LAST_NOW, CORE_FREQUENCY);
 
     unsafe {
         let tim2 = &*hal::pac::TIM2::ptr();
@@ -342,20 +262,22 @@ fn TIM2() {
     }
 }
 
+// TIM5 Timer Interrupt Handler (Timer2)
 #[hal::interrupt]
 fn TIM5() {
-    static mut TIM5_LAST_NOW: u64 = 0;
-    TIM5_COUNTER.fetch_add(1, Ordering::Relaxed);
+    static mut TIMER2_LAST_NOW: u64 = 0;
+    TIMER2_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     // Conditional critical section based on features
     #[cfg(any(feature = "block-timer2", feature = "block-both"))]
     critical_section::with(|_| {
-        check_timer_monotonic(TimerId::TIM5, TIM5_LAST_NOW);
+        check_timer_monotonic(&TIMER, TimerId::Timer2, TIMER2_LAST_NOW, CORE_FREQUENCY);
     });
 
     #[cfg(not(any(feature = "block-timer2", feature = "block-both")))]
-    check_timer_monotonic(TimerId::TIM5, TIM5_LAST_NOW);
+    check_timer_monotonic(&TIMER, TimerId::Timer2, TIMER2_LAST_NOW, CORE_FREQUENCY);
 
+    // Clear the overflow interrupt flag
     unsafe {
         let tim5 = &*hal::pac::TIM5::ptr();
         if tim5.sr().read().uif().bit_is_set() {

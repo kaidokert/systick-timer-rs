@@ -1,7 +1,7 @@
 #![no_std]
 
-use systick_timer::Timer;
 use rtt_target::rprintln;
+use systick_timer::Timer;
 
 /// Generic timer ID for monotonic checking
 pub enum TimerId {
@@ -25,7 +25,7 @@ pub fn check_timer_monotonic<T: Into<TimerId>>(
     timer: &Timer,
     timer_id: T,
     last_now: &mut u64,
-    core_frequency: u32
+    core_frequency: u32,
 ) {
     let timer_name: &'static str = timer_id.into().into();
     let now = timer.now();
@@ -132,10 +132,9 @@ pub fn report_configuration() {
 }
 
 /// Calculate test duration based on features (returns seconds)
-pub const fn get_test_duration_seconds() -> u64 {
+pub const fn get_test_duration_seconds(full_duration: u64) -> u64 {
     if cfg!(feature = "duration-full") {
-        // Platforms can override this with their own values
-        45 // Default full duration
+        full_duration
     } else {
         5 // Short duration for all platforms
     }
