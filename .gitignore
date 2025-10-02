@@ -1,9 +1,6 @@
 target/
 Cargo.lock
-testapps/stm32f412-nucleo/logs/
 testapps/stm32f412-nucleo/dump/
-testapps/stm32f412-nucleo/*.log
 testapps/feather-m0-board/dump/
 testapps/logs/
-testapps/feather-m0-board/src/bin/timer_stress.rs
 settings.json

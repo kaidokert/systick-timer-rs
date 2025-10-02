@@ -38,27 +38,23 @@ Use `--no-default-features` and explicitly specify desired features:
 
 ```bash
 # Quick baseline test
-cargo build --bin rtt_plus --no-default-features --features freq-50-50,block-none,duration-short,reload-normal
+cargo build --no-default-features --features freq-50-50,block-none,duration-short,reload-normal
 
 # Test critical section blocking
-cargo build --bin rtt_plus --no-default-features --features freq-50-49999,block-both,duration-short,reload-normal
+cargo build --no-default-features --features freq-50-49999,block-both,duration-short,reload-normal
 
 # Test overflow conditions (accelerated)
-cargo build --bin rtt_plus --no-default-features --features freq-50-50,block-none,duration-full,reload-small
+cargo build --no-default-features --features freq-50-50,block-none,duration-full,reload-small
 
 # Stress test: frequency mismatch + blocking + overflow
-cargo build --bin rtt_plus --no-default-features --features freq-50-49999,block-both,duration-full,reload-small
+cargo build --no-default-features --features freq-50-49999,block-both,duration-full,reload-small
 ```
 
 ### Running Tests
 
 ```bash
 # Build and run specific configuration
-cargo run --bin rtt_plus --no-default-features --features freq-50-50,block-none,duration-short,reload-normal
-
-# Or build first, then run
-cargo build --bin rtt_plus --no-default-features --features [your-features]
-probe-rs run --chip STM32F412ZE target/thumbv7em-none-eabihf/debug/rtt_plus
+cargo run --no-default-features --features freq-50-50,block-none,duration-short,reload-normal
 ```
 
 ## Test Objectives

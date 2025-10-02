@@ -576,7 +576,6 @@ mod tests {
         assert_eq!(t3, 100);
     }
 
-    const FREQ: u64 = 48_000_000;
     const RELOAD: u32 = 100; // small for easy arithmetic; period = 101 cycles
 
     #[test]

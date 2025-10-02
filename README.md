@@ -18,8 +18,10 @@ Optionally wraps this in an [embassy-time-driver](https://crates.io/crates/embas
 This timer implementation is designed to handle exactly **one missed SysTick wrap** through its PendST bit detection mechanism. If the SysTick ISR is delayed by higher-priority interrupts for more than one complete wrap period, monotonic time violations **will occur**.
 
 **Reminders:**
-- Keep the SysTick ISR at high priority relative to application interrupts
+- Keep the SysTick ISR at higher or equal priority relative to application interrupts
 - Ensure critical sections in higher-priority ISRs are brief, e.g. well shorter than SysTick reload interval
+
+The implementation itself is non-locking and does not use critical sections.
 
 
 [Examples included](https://github.com/kaidokert/systick-timer-rs/tree/main/examples) for QEMU Cortex-M0.
