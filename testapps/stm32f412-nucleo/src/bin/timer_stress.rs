@@ -3,17 +3,16 @@
 
 use stm32f412_nucleo as lib;
 
-use core::sync::atomic::{AtomicU32, Ordering};
-use cortex_m::peripheral::NVIC;
+use core::sync::atomic::Ordering;
 use hal::rcc::Config;
 use lib::hal::{self, interrupt, prelude::*, timer::Timer as HalTimer};
 use rtt_target::{rprintln, rtt_init_log};
 use systick_timer::Timer;
 use timer_stress::{
-    TimerId, check_timer_monotonic, get_test_duration_seconds, report_configuration,
+    TICK_RESOLUTION, TIMER1_COUNTER, TIMER2_COUNTER, TimerId, check_timer_monotonic,
+    configure_interrupts, report_configuration, timer_stress_test,
 };
 
-const TICK_RESOLUTION: u64 = 1_000_000_000; // 1 GHz, 1 ns resolution
 const CORE_FREQUENCY: u32 = 100_000_000;
 const FULL_TEST_DURATION_SECS: u64 = 50;
 
@@ -27,12 +26,6 @@ const TIMER_ABOVE_HZ: u32 = 50_001;
 static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0x3FF, CORE_FREQUENCY as u64);
 #[cfg(not(feature = "reload-small"))]
 static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0xFFFFFF, CORE_FREQUENCY as u64);
-static TIMER1_COUNTER: AtomicU32 = AtomicU32::new(0);
-static TIMER2_COUNTER: AtomicU32 = AtomicU32::new(0);
-
-const fn seconds(s: u64) -> u64 {
-    s * TICK_RESOLUTION // s * (ticks/second)
-}
 
 /// Encode priority level for ARM Cortex-M NVIC
 /// ARM Cortex-M uses only the upper 4 bits for priority (on STM32F4)
@@ -45,7 +38,7 @@ const fn encode_priority(priority: u8) -> u8 {
 unsafe fn set_irq_prio_raw(irq: hal::pac::Interrupt, priority: u8) {
     let irqn = irq as usize;
     unsafe {
-        let nvic = &(*NVIC::PTR);
+        let nvic = &(*cortex_m::peripheral::NVIC::PTR);
         nvic.ipr[irqn].write(encode_priority(priority));
     }
 }
@@ -55,61 +48,6 @@ unsafe fn set_systick_priority(priority: u8) {
     unsafe {
         let scb = &(*cortex_m::peripheral::SCB::PTR);
         scb.shpr[11].write(encode_priority(priority)); // SysTick is exception 15, shpr[11]
-    }
-}
-
-/// Configure all interrupt priorities based on features
-pub fn configure_interrupt_priorities(
-    tim1_interrupt: hal::pac::Interrupt,
-    tim2_interrupt: hal::pac::Interrupt,
-) {
-    unsafe {
-        if cfg!(feature = "priority-equal") {
-            // All equal priority (1,1,1)
-            set_systick_priority(1);
-            set_irq_prio_raw(tim1_interrupt, 1);
-            set_irq_prio_raw(tim2_interrupt, 1);
-        } else if cfg!(feature = "priority-systick-high") {
-            // SysTick high, timers med (0,1,1)
-            set_systick_priority(0);
-            set_irq_prio_raw(tim1_interrupt, 1);
-            set_irq_prio_raw(tim2_interrupt, 1);
-        } else if cfg!(feature = "priority-timer1-high") {
-            // Timer1 high, others med (1,0,1)
-            set_systick_priority(1);
-            set_irq_prio_raw(tim1_interrupt, 0);
-            set_irq_prio_raw(tim2_interrupt, 1);
-        } else if cfg!(feature = "priority-timer2-high") {
-            // Timer2 high, others med (1,1,0)
-            set_systick_priority(1);
-            set_irq_prio_raw(tim1_interrupt, 1);
-            set_irq_prio_raw(tim2_interrupt, 0);
-        } else if cfg!(feature = "priority-mixed-1") {
-            // SysTick high, Timer1 high, Timer2 low (0,0,2)
-            set_systick_priority(0);
-            set_irq_prio_raw(tim1_interrupt, 0);
-            set_irq_prio_raw(tim2_interrupt, 2);
-        } else if cfg!(feature = "priority-mixed-2") {
-            // SysTick high, Timer1 med, Timer2 low (0,1,2)
-            set_systick_priority(0);
-            set_irq_prio_raw(tim1_interrupt, 1);
-            set_irq_prio_raw(tim2_interrupt, 2);
-        } else if cfg!(feature = "priority-mixed-3") {
-            // SysTick high, Timer1 low, Timer2 med (0,2,1)
-            set_systick_priority(0);
-            set_irq_prio_raw(tim1_interrupt, 2);
-            set_irq_prio_raw(tim2_interrupt, 1);
-        } else if cfg!(feature = "priority-timers-high") {
-            // Timers high, SysTick low (2,0,0)
-            set_systick_priority(2);
-            set_irq_prio_raw(tim1_interrupt, 0);
-            set_irq_prio_raw(tim2_interrupt, 0);
-        } else {
-            // Default: all equal priority (1,1,1)
-            set_systick_priority(1);
-            set_irq_prio_raw(tim1_interrupt, 1);
-            set_irq_prio_raw(tim2_interrupt, 1);
-        }
     }
 }
 
@@ -160,75 +98,15 @@ fn main() -> ! {
         tim5_frequency
     );
 
-    // Configure interrupt priorities before enabling interrupts
-    configure_interrupt_priorities(hal::pac::Interrupt::TIM2, hal::pac::Interrupt::TIM5);
-
-    // Enable TIM2 and TIM5 interrupts
-    unsafe {
-        NVIC::unmask(hal::pac::Interrupt::TIM2);
-        NVIC::unmask(hal::pac::Interrupt::TIM5);
-    }
-
-    let start_time = TIMER.now();
-    let mut last_log_time = start_time;
-    let mut iteration_count = 0u64;
-    let one_second = seconds(1);
-
-    let duration_secs = get_test_duration_seconds(FULL_TEST_DURATION_SECS);
-    let test_duration = seconds(duration_secs);
-
-    rprintln!("Starting timer loop at: {}", start_time);
-    if cfg!(feature = "duration-full") {
-        rprintln!(
-            "Test will run for {} seconds (targeting 64-bit overflow)",
-            duration_secs
-        );
-    } else {
-        rprintln!("Test will run for {} seconds", duration_secs);
-    }
-    rprintln!(
-        "one_second = {}, test_duration = {}",
-        one_second,
-        test_duration
+    // Configure interrupt priorities and enable interrupts
+    configure_interrupts(
+        hal::pac::Interrupt::TIM2,
+        hal::pac::Interrupt::TIM5,
+        set_systick_priority,
+        set_irq_prio_raw,
     );
 
-    loop {
-        let current_time = TIMER.now();
-        let elapsed_ns = current_time - start_time;
-
-        // Log status every second
-        if current_time - last_log_time >= one_second {
-            let t1_count = TIMER1_COUNTER.load(Ordering::Relaxed);
-            let t2_count = TIMER2_COUNTER.load(Ordering::Relaxed);
-            rprintln!(
-                "Elapsed: {}s, T1: {} ticks, T2: {} ticks, iterations: {}",
-                elapsed_ns / 1_000_000_000,
-                t1_count,
-                t2_count,
-                iteration_count
-            );
-            last_log_time = current_time;
-        }
-
-        // Exit after test duration
-        if elapsed_ns >= test_duration {
-            let t1_final = TIMER1_COUNTER.load(Ordering::Relaxed);
-            let t2_final = TIMER2_COUNTER.load(Ordering::Relaxed);
-            rprintln!(
-                "Test completed after {:.3}s, total iterations: {}",
-                duration_secs,
-                iteration_count
-            );
-            rprintln!(
-                "Final stats - TIMER1: {} ticks, TIMER2: {} ticks",
-                t1_final,
-                t2_final
-            );
-            break;
-        }
-
-        iteration_count += 1;
-    }
+    timer_stress_test(&TIMER, FULL_TEST_DURATION_SECS);
 
     stm32f412_nucleo::exit()
 }

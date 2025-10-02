@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 systick-timer = { path = "../../systick-timer" }
 rtt-target = { version = "0.6", features = ["log"] }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 
 [features]
 # Timer frequency configurations (generic across platforms)
