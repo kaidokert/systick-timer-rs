@@ -8,7 +8,7 @@ documentation = "https://docs.rs/systick-timer"
 description = """
 64-bit SysTick timer for Cortex-M0
 """
-readme = "README.md"
+readme = "../README.md"
 repository = "https://github.com/kaidokert/systick-timer-rs"
 homepage = "https://github.com/kaidokert/systick-timer-rs"
 keywords = ["embassy","no_std","cortex-m"]
