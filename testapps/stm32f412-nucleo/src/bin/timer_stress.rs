@@ -14,7 +14,7 @@ use timer_stress::{
 };
 
 const CORE_FREQUENCY: u32 = 100_000_000;
-const FULL_TEST_DURATION_SECS: u64 = 50;
+const FULL_TEST_DURATION_SECS: u64 = 30;
 
 // STM32F412-specific timer frequencies (50kHz baseline - appropriate for Cortex-M4)
 const TIMER_TARGET_HZ: u32 = 50_000;

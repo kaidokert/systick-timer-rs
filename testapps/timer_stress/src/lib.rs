@@ -205,7 +205,13 @@ pub fn configure_interrupts<T: cortex_m::interrupt::InterruptNumber>(
     }
 }
 
-/// Calculate test duration based on features (returns seconds)
+/// Calculate test duration based on Cargo features (returns seconds)
+///
+/// Duration is controlled at build time via Cargo features:
+/// - With `duration-full` feature: Uses the platform-specific `full_duration` value
+/// - Without `duration-full` feature: Uses 5 seconds (short test for quick verification)
+///
+/// Platform-specific full durations are defined as constants in each platform's main file.
 pub const fn get_test_duration_seconds(full_duration: u64) -> u64 {
     if cfg!(feature = "duration-full") {
         full_duration

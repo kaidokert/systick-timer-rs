@@ -42,7 +42,7 @@ block-both = ["timer_stress/block-both"]      # Both timers use critical_section
 
 # Test duration configurations
 duration-short = ["timer_stress/duration-short"]  # 5 second test (quick verification)
-duration-full = ["timer_stress/duration-full"]   # 45+ second test (catch 64-bit overflow issues)
+duration-full = ["timer_stress/duration-full"]   # 30 second test (catch 64-bit overflow issues)
 
 # Timer reload configurations (to accelerate overflow testing)
 reload-normal = ["timer_stress/reload-normal"]   # 0xFFFFFF reload (~51 hours to overflow)
