@@ -462,9 +462,9 @@ def main():
   PRIORITY: E=equal, S=systick-high, 1=timer1-high, 2=timer2-high, M/L/R=mixed, X=timers-high (INVALID)
 
 Examples:
-  ANSNE = freq-target-target,block-none,duration-short,reload-normal,priority-equal
-  BFFSX = freq-target-below,block-both,duration-full,reload-small,priority-timers-high (INVALID - skipped by default)
-  CBSNS = freq-target-above,block-both,duration-short,reload-normal,priority-systick-high
+  ANSNE-R = freq-target-target,block-none,duration-short,reload-normal,priority-equal
+  BFFSX-R = freq-target-below,block-both,duration-full,reload-small,priority-timers-high (INVALID - skipped by default)
+  CBSNS-R = freq-target-above,block-both,duration-short,reload-normal,priority-systick-high
 
 Total combinations: 3×4×2×2×8 = 384 tests
 Valid combinations (release mode default): 3×4×2×2×7 = 336 tests
