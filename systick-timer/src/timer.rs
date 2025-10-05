@@ -113,18 +113,25 @@ impl Timer {
             };
 
             // Calculate final time.
-            let total_cycles = wraps_u64
-                .saturating_mul(reload + 1)
-                .saturating_add(reload - final_val);
+            let reload_plus_1 = reload + 1;
+            let low_part = reload - final_val;
+
+            // If cycles computation would overflow u64, use u128 path from the start
+            if wraps_u64 > (u64::MAX - low_part) / reload_plus_1 {
+                let cycles128 = (wraps_u64 as u128) * (reload_plus_1 as u128) + (low_part as u128);
+                let ticks128 = cycles128 * (self.multiplier as u128);
+                return (ticks128 >> self.shift) as u64;
+            }
+
+            let total_cycles = wraps_u64 * reload_plus_1 + low_part;
 
             // Scale to ticks.
-            let (result, overflow) = total_cycles.overflowing_mul(self.multiplier);
-            if !overflow {
-                return result >> self.shift;
-            } else {
+            let (result, mul_overflow) = total_cycles.overflowing_mul(self.multiplier);
+            if mul_overflow {
                 let wide = (total_cycles as u128) * (self.multiplier as u128);
                 return (wide >> self.shift) as u64;
             }
+            return result >> self.shift;
         }
     }
 
