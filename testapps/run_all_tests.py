@@ -37,7 +37,7 @@ class TestRunner:
         self.priority_options = ["priority-equal", "priority-systick-high", "priority-timer1-high", "priority-timer2-high", "priority-mixed-1", "priority-mixed-2", "priority-mixed-3", "priority-timers-high"]
 
         # Invalid configurations that violate design constraints
-        self.invalid_priorities = ["priority-timers-high"]
+        self.invalid_priorities = ["priority-timers-high", "priority-timer1-high", "priority-timer2-high"]
 
         self.results: List[TestResult] = []
         self.failed_tests: List[TestResult] = []
