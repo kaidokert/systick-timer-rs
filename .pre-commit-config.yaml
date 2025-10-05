@@ -12,8 +12,59 @@ repos:
     -   id: mixed-line-ending
         args: ["--fix=auto"]
 
--   repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
+-   repo: local
     hooks:
-    -   id: fmt
-        name: Run fmt
+    -   id: fmt-systick-timer
+        name: Format systick-timer crate
+        entry: cargo fmt --manifest-path systick-timer/Cargo.toml -- --check
+        language: system
+        files: ^systick-timer/.*\.rs$
+        pass_filenames: false
+    -   id: fmt-timer-stress
+        name: Format timer_stress crate
+        entry: cargo fmt --manifest-path testapps/timer_stress/Cargo.toml -- --check
+        language: system
+        files: ^testapps/timer_stress/.*\.rs$
+        pass_filenames: false
+    -   id: fmt-stm32f412-nucleo
+        name: Format stm32f412-nucleo
+        entry: cargo fmt --manifest-path testapps/stm32f412-nucleo/Cargo.toml -- --check
+        language: system
+        files: ^testapps/stm32f412-nucleo/.*\.rs$
+        pass_filenames: false
+    -   id: fmt-feather-m0-board
+        name: Format feather-m0-board
+        entry: cargo fmt --manifest-path testapps/feather-m0-board/Cargo.toml -- --check
+        language: system
+        files: ^testapps/feather-m0-board/.*\.rs$
+        pass_filenames: false
+    -   id: clippy-systick-timer
+        name: Clippy systick-timer crate
+        entry: cargo clippy --manifest-path systick-timer/Cargo.toml --no-default-features -- -D warnings
+        language: system
+        files: ^systick-timer/.*\.rs$
+        pass_filenames: false
+    -   id: clippy-timer-stress
+        name: Clippy timer_stress crate
+        entry: cargo clippy --manifest-path testapps/timer_stress/Cargo.toml --no-default-features -- -D warnings
+        language: system
+        files: ^testapps/timer_stress/.*\.rs$
+        pass_filenames: false
+    -   id: clippy-stm32f412-nucleo
+        name: Clippy stm32f412-nucleo
+        entry: cargo clippy --manifest-path testapps/stm32f412-nucleo/Cargo.toml --no-default-features --bin timer_stress --target thumbv7em-none-eabihf -- -D warnings
+        language: system
+        files: ^testapps/.*\.rs$
+        pass_filenames: false
+    -   id: clippy-feather-m0-board
+        name: Clippy feather-m0-board
+        entry: cargo clippy --manifest-path testapps/feather-m0-board/Cargo.toml --no-default-features --bin timer_stress --target thumbv6m-none-eabi -- -D warnings
+        language: system
+        files: ^testapps/.*\.rs$
+        pass_filenames: false
+    -   id: test-systick-timer
+        name: Test systick-timer crate
+        entry: cargo test --manifest-path systick-timer/Cargo.toml --no-default-features
+        language: system
+        files: ^systick-timer/.*\.rs$
+        pass_filenames: false

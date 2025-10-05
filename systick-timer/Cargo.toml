@@ -24,6 +24,7 @@ embassy-time-driver = { version = "0.2", optional = true }
 default = ["cortex-m"]
 cortex-m = []
 embassy-defaults = [] # Set up a default/demo instance
+diagnostics = [] # Enable diagnostic methods for testing
 
 [package.metadata.docs.rs]
 features = ["cortex-m", "embassy-time-driver"]

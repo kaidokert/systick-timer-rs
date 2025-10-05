@@ -16,9 +16,25 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build ( cortex-m )
+    - name: Install embedded targets
+      run: |
+        rustup target add thumbv7em-none-eabihf  # STM32F412 (Cortex-M4)
+        rustup target add thumbv6m-none-eabi     # Feather M0 (Cortex-M0+)
+    - name: Build systick-timer (cortex-m)
       run: cargo build --verbose --no-default-features
-    - name: Run tests
+      working-directory: systick-timer
+    - name: Test systick-timer
       run: cargo test --verbose --no-default-features
-    - name: Build
+      working-directory: systick-timer
+    - name: Build systick-timer (default)
       run: cargo build
+      working-directory: systick-timer
+    - name: Build timer_stress
+      run: cargo build --no-default-features
+      working-directory: testapps/timer_stress
+    - name: Check STM32F412 testapp
+      run: cargo check --no-default-features --bin timer_stress --target thumbv7em-none-eabihf
+      working-directory: testapps/stm32f412-nucleo
+    - name: Check Feather M0 testapp
+      run: cargo check --no-default-features --bin timer_stress --target thumbv6m-none-eabi
+      working-directory: testapps/feather-m0-board

@@ -1,2 +1,6 @@
 target/
 Cargo.lock
+testapps/stm32f412-nucleo/dump/
+testapps/feather-m0-board/dump/
+testapps/logs/
+settings.json
