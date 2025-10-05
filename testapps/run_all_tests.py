@@ -91,10 +91,7 @@ class TestRunner:
             return True
 
         # Debug mode: critical sections cause excessive overhead
-        if not self.release_mode and block != "block-none":
-            return True
-
-        return False
+        return not self.release_mode and block != "block-none"
 
     def generate_all_configs(self) -> List[Tuple[str, str, str, str, str]]:
         """Generate all possible feature combinations, optionally filtering invalid ones."""
@@ -411,7 +408,7 @@ class TestRunner:
         self.logger.info(f"{'='*80}")
 
         total = len(self.results)
-        passed = sum(1 for r in self.results if r.success)
+        passed = sum(r.success for r in self.results)
         failed = total - passed
 
         self.logger.info(f"Total tests: {total}")
