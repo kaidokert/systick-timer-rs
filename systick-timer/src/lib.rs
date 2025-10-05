@@ -10,6 +10,9 @@
 //! The timer is a standalone implementation that can be used from
 //! any Cortex-M0/M3/M4/M7 code.
 //!
+//! The timer does not use critical sections or locking, only atomic
+//! operations.
+//!
 //! Usage:
 //! ```ignore
 //! // Set up timer with 1ms resolution, reload at 100us, 8MHz clock

@@ -26,11 +26,17 @@ repos:
         language: system
         files: ^testapps/timer_stress/.*\.rs$
         pass_filenames: false
-    -   id: fmt-testapps
-        name: Format testapps
+    -   id: fmt-stm32f412-nucleo
+        name: Format stm32f412-nucleo
         entry: cargo fmt --manifest-path testapps/stm32f412-nucleo/Cargo.toml -- --check
         language: system
-        files: ^testapps/.*\.rs$
+        files: ^testapps/stm32f412-nucleo/.*\.rs$
+        pass_filenames: false
+    -   id: fmt-feather-m0-board
+        name: Format feather-m0-board
+        entry: cargo fmt --manifest-path testapps/feather-m0-board/Cargo.toml -- --check
+        language: system
+        files: ^testapps/feather-m0-board/.*\.rs$
         pass_filenames: false
     -   id: clippy-systick-timer
         name: Clippy systick-timer crate

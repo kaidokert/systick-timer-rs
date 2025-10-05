@@ -13,8 +13,8 @@ use lib::hal::{self};
 use rtt_target::{rprintln, rtt_init_log};
 use systick_timer::Timer;
 use timer_stress::{
-    TimerId, check_timer_monotonic, report_configuration,
-    configure_interrupts, TICK_RESOLUTION, TIMER1_COUNTER, TIMER2_COUNTER, timer_stress_test,
+    TICK_RESOLUTION, TIMER1_COUNTER, TIMER2_COUNTER, TimerId, check_timer_monotonic,
+    configure_interrupts, report_configuration, timer_stress_test,
 };
 
 const CORE_FREQUENCY: u32 = 48_000_000;
@@ -31,7 +31,6 @@ static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0x1FFF, CORE_FREQUENCY as u64)
 #[cfg(not(feature = "reload-small"))]
 static TIMER: Timer = Timer::new(TICK_RESOLUTION, 0xFFFFFF, CORE_FREQUENCY as u64);
 
-
 /// Encode priority level for ARM Cortex-M NVIC
 /// ARM Cortex-M0+ uses only 2 bits for priority (4 levels: 0, 1, 2, 3)
 /// Shift to upper bits: priority 0 = 0x00, priority 1 = 0x40, priority 2 = 0x80, etc.
@@ -44,11 +43,13 @@ unsafe fn set_irq_prio_raw(irq: hal::pac::Interrupt, priority: u8) {
     let irqn = irq as usize;
     unsafe {
         let nvic = &(*cortex_m::peripheral::NVIC::PTR);
-        // SAMD21 has limited interrupt count, check bounds
-        if irqn < nvic.ipr.len() {
-            nvic.ipr[irqn].write(encode_priority(priority) as u32);
+        let ipr_index = irqn / 4;
+        let byte_offset = (irqn % 4) * 8;
+        if ipr_index < nvic.ipr.len() {
+            let mask = 0xFF << byte_offset;
+            let value = (encode_priority(priority) as u32) << byte_offset;
+            nvic.ipr[ipr_index].modify(|r| (r & !mask) | value);
         }
-        // If out of bounds, interrupt priorities aren't supported for this IRQ on SAMD21
     }
 }
 
@@ -61,7 +62,6 @@ unsafe fn set_systick_priority(priority: u8) {
         scb.shpr[1].write(encode_priority(priority) as u32);
     }
 }
-
 
 #[cortex_m_rt::entry]
 fn main() -> ! {

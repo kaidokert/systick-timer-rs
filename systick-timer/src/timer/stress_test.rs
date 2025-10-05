@@ -51,7 +51,7 @@ fn monotonicity_stress_test() {
         while !stop_isr.load(Ordering::Relaxed) {
             // Lock the timer to check and handle the pending interrupt atomically.
             let timer_guard = timer_isr.lock().unwrap();
-            if timer_guard.is_systick_pending() {
+            if timer_guard.is_systick_pending_internal() {
                 timer_guard.set_pendst_pending(false); // ISR clears the pending bit
                 timer_guard.systick_handler();
             }

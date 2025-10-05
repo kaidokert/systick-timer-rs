@@ -48,7 +48,7 @@ pub fn check_timer_monotonic<T: Into<TimerId>>(
             timer.diagnose_timing_violation(now, *last_now, core_frequency as u64)
         {
             let observed_periods = total_missed_wraps - 1; // Subtract the 1 that PendST compensated for
-            let wrap_period_ms = (0xFFFFFF as f32 / core_frequency as f32) * 1000.0;
+            let wrap_period_ms = (timer.reload_value() as f32 / core_frequency as f32) * 1000.0;
 
             rprintln!(
                 "Timer {} CATASTROPHIC ISR STARVATION: {} < {} (backwards jump = {} wrap periods)",

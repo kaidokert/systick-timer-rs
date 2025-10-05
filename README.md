@@ -43,3 +43,8 @@ cargo runq --example embassy_time
 To run the tests, run without default features:
 ```sh
 cargo test --no-default-features
+
+## Todo:
+
+Add a constant-execution time option to now(). This would trade off
+slower average access to deterministic, worst-case execution.

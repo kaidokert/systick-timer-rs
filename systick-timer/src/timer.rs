@@ -13,12 +13,11 @@ pub struct Timer {
     inner_wraps: AtomicU32, // Counts SysTick interrupts (lower 32 bits)
     outer_wraps: AtomicU32, // Counts overflows of inner_wraps (upper 32 bits)
     reload_value: u32,      // SysTick reload value (max 2^24 - 1)
+    tick_hz: u64,           // Output frequency in Hz
     multiplier: u64,        // Precomputed for scaling cycles to ticks
     shift: u32,             // Precomputed for scaling efficiency
     #[cfg(test)]
     current_systick: AtomicU32,
-    #[cfg(test)]
-    systick_has_wrapped: AtomicBool, // emulated COUNTFLAG (read-to-clear)
     #[cfg(test)]
     after_v1_hook: Option<fn(&Timer)>, // injected nested call site
     #[cfg(test)]
@@ -30,9 +29,6 @@ impl Timer {
     ///
     /// Call this from the SysTick interrupt handler.
     pub fn systick_handler(&self) {
-        // Guarantee the COUNTFLAG is cleared
-        self.read_systick_countflag();
-
         // Increment inner_wraps and check for overflow
         let inner = self.inner_wraps.load(Ordering::Relaxed);
         // Check for overflow (inner was u32::MAX)
@@ -87,7 +83,7 @@ impl Timer {
             // If we're here, the wrap counters are stable, but we need to handle the race
             // where PendST could have flipped after wraps_pre but before wraps_post.
             // Re-sample both PendST and VAL now that we know the counters are consistent.
-            let is_pending = self.is_systick_pending();
+            let is_pending = self.is_systick_pending_internal();
             let val_after = self.get_syst() as u64;
 
             // Double-check that no ISR ran during our PendST/VAL re-sampling.
@@ -144,33 +140,18 @@ impl Timer {
         panic!("This module requires the cortex-m crate to be available");
     }
 
-    #[inline(always)]
-    pub fn read_systick_countflag(&self) -> bool {
-        #[cfg(test)]
-        {
-            return self
-                .systick_has_wrapped
-                .swap(false, core::sync::atomic::Ordering::SeqCst);
-        }
-
-        // # Safety
-        // Not safe in any way - it's mutating the flag register without having & mut
-        #[cfg(all(not(test), feature = "cortex-m"))]
-        unsafe {
-            // COUNTFLAG is bit 16. Read clears it.
-            const COUNTFLAG: u32 = 1 << 16;
-            let csr = (*cortex_m::peripheral::SYST::PTR).csr.read();
-            (csr & COUNTFLAG) != 0
-        }
-
-        #[cfg(all(not(test), not(feature = "cortex-m")))]
-        {
-            panic!("This module requires the cortex-m crate");
-        }
+    /// Returns the SysTick reload value configured for this timer.
+    pub const fn reload_value(&self) -> u32 {
+        self.reload_value
     }
 
-    /// Checks if the SysTick interrupt is pending.
-    pub fn is_systick_pending(&self) -> bool {
+    /// Returns the output tick frequency in Hz.
+    pub const fn tick_hz(&self) -> u64 {
+        self.tick_hz
+    }
+
+    /// Internal method to check if the SysTick interrupt is pending.
+    fn is_systick_pending_internal(&self) -> bool {
         #[cfg(test)]
         return self.pendst_is_pending.load(Ordering::SeqCst);
 
@@ -179,6 +160,12 @@ impl Timer {
 
         #[cfg(all(not(test), not(feature = "cortex-m")))]
         return false; // Or panic, depending on desired behavior without cortex-m
+    }
+
+    /// Checks if the SysTick interrupt is pending (diagnostic method).
+    #[cfg(feature = "diagnostics")]
+    pub fn is_systick_pending(&self) -> bool {
+        self.is_systick_pending_internal()
     }
 
     // Figure out a shift that leads to less precision loss
@@ -229,12 +216,11 @@ impl Timer {
             inner_wraps: AtomicU32::new(0),
             outer_wraps: AtomicU32::new(0),
             reload_value,
+            tick_hz,
             multiplier,
             shift,
             #[cfg(test)]
             current_systick: AtomicU32::new(0),
-            #[cfg(test)]
-            systick_has_wrapped: AtomicBool::new(false),
             #[cfg(test)]
             after_v1_hook: None,
             #[cfg(test)]
@@ -258,11 +244,9 @@ impl Timer {
     /// the PendST bit detection mechanism. If the SysTick ISR is starved longer than
     /// one complete wrap period, monotonic violations will occur.
     ///
-    /// **Key insight**: A backwards jump of N wrap periods indicates N+1 total missed wraps,
-    /// because the implementation already compensated for the first missed wrap via PendST.
-    ///
     /// Returns `Some(total_missed_wraps)` if the backwards jump matches the pattern of
     /// ISR starvation (N+1 total missed wraps). Returns `None` for other timing issues.
+    #[cfg(feature = "diagnostics")]
     pub fn diagnose_timing_violation(
         &self,
         current_time: u64,
@@ -276,14 +260,18 @@ impl Timer {
         let backwards_jump = previous_time - current_time;
         let wrap_period_ns = ((self.reload_value as u64 + 1) * 1_000_000_000) / systick_freq;
 
+        // Convert backwards_jump from ticks to nanoseconds for comparison
+        // backwards_jump is in ticks scaled by tick_hz
+        let backwards_jump_ns = (backwards_jump * 1_000_000_000) / self.tick_hz;
+
         // Check if backwards jump is close to N complete wrap periods
         // If so, this indicates N+1 total missed wraps (since PendST already compensated for 1)
         for observed_periods in 1..=3 {
             let expected_jump = observed_periods * wrap_period_ns;
             let tolerance = wrap_period_ns / 100; // 1% tolerance
 
-            if backwards_jump >= expected_jump.saturating_sub(tolerance)
-                && backwards_jump <= expected_jump + tolerance
+            if backwards_jump_ns >= expected_jump.saturating_sub(tolerance)
+                && backwards_jump_ns <= expected_jump + tolerance
             {
                 return Some(observed_periods as u32 + 1); // +1 because PendST compensated for first wrap
             }
@@ -304,11 +292,6 @@ impl Timer {
             self.reload_value
         );
         self.current_systick.store(value, Ordering::SeqCst);
-    }
-
-    #[cfg(test)]
-    pub fn set_systick_has_wrapped(&self, val: bool) {
-        self.systick_has_wrapped.store(val, Ordering::SeqCst);
     }
 
     #[cfg(test)]
@@ -334,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_timer_new() {
-        let mut timer = Timer::new(1000, 5, 12_000);
+        let timer = Timer::new(1000, 5, 12_000);
         timer.inner_wraps.store(4, Ordering::Relaxed); // 4 interrupts = 24 cycles
         timer.set_syst(3); // Start of next period
         assert_eq!(timer.now(), 2); // Should be ~2 ticks

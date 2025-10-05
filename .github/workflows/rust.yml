@@ -16,12 +16,21 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build ( cortex-m )
+    - name: Build systick-timer (cortex-m)
       run: cargo build --verbose --no-default-features
       working-directory: systick-timer
-    - name: Run tests
+    - name: Test systick-timer
       run: cargo test --verbose --no-default-features
       working-directory: systick-timer
-    - name: Build
+    - name: Build systick-timer (default)
       run: cargo build
       working-directory: systick-timer
+    - name: Build timer_stress
+      run: cargo build --no-default-features
+      working-directory: testapps/timer_stress
+    - name: Check STM32F412 testapp
+      run: cargo check --no-default-features --bin timer_stress
+      working-directory: testapps/stm32f412-nucleo
+    - name: Check Feather M0 testapp
+      run: cargo check --no-default-features --bin timer_stress
+      working-directory: testapps/feather-m0-board

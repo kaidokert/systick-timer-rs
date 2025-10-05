@@ -413,6 +413,11 @@ class TestRunner:
         passed = sum(1 for r in self.results if r.success)
         failed = total - passed
 
+        if total == 0:
+            self.logger.info("No tests were executed.")
+            self.logger.info(f"Complete log saved to: {self.log_filename}")
+            return
+
         self.logger.info(f"Total tests: {total}")
         self.logger.info(f"Passed: {passed}")
         self.logger.info(f"Failed: {failed}")

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-systick-timer = { path = "../../systick-timer" }
+systick-timer = { path = "../../systick-timer", features = ["diagnostics"] }
 rtt-target = { version = "0.6", features = ["log"] }
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 
