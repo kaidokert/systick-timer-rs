@@ -98,7 +98,12 @@ impl<const N: usize> embassy_time_driver::Driver for SystickDriver<N> {
             let mutex_borrow = self.wakeup_at.borrow(cs);
             let mut found = false;
             for slot in mutex_borrow.borrow_mut().iter_mut() {
-                if slot.is_none() {
+                if let Some(slot) = slot {
+                    if slot.waker.will_wake(waker) && slot.wakeup_at == at {
+                        found = true;
+                        break;
+                    }
+                } else {
                     *slot = Some(Wakeup {
                         wakeup_at: at,
                         waker: waker.clone(),
