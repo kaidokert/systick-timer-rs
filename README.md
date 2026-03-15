@@ -1,4 +1,4 @@
-### 64-bit SysTick timer for Cortex-M0
+### 64-bit SysTick timer for Cortex-M
 
 [![crate](https://img.shields.io/crates/v/systick-timer.svg)](https://crates.io/crates/systick-timer)
 [![documentation](https://docs.rs/systick-timer/badge.svg)](https://docs.rs/systick-timer/)
@@ -30,6 +30,12 @@ To run the demos with QEMU:
 
 ```
 cargo runq --example basic_time
+```
+
+`embedded-hal` `DelayNs` demo:
+
+```
+cargo runq --example delay_hal
 ```
 
 Embassy version:

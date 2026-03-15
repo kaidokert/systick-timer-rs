@@ -55,3 +55,10 @@ required-features = [
     "embassy-executor/arch-cortex-m",
     "embassy-executor/executor-thread",
 ]
+
+[[example]]
+name = "delay_hal"
+required-features = [
+    "cortex-m",
+    "embedded-hal",
+]
