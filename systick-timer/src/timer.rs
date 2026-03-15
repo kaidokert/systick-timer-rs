@@ -5,6 +5,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(test)]
 use core::sync::atomic::AtomicBool;
 
+#[cfg(feature = "embedded-hal")]
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
 /// A 64-bit timer based on SysTick.
 ///
 /// Stores wraparounds in 2 32-bit atomics. Scales the systick counts
@@ -155,6 +158,29 @@ impl Timer {
     /// Returns the output tick frequency in Hz.
     pub const fn tick_hz(&self) -> u64 {
         self.tick_hz
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    fn delay_ticks_from_ns(&self, ns: u32) -> u64 {
+        if ns == 0 || self.tick_hz == 0 {
+            return 0;
+        }
+
+        let ticks =
+            (((ns as u128) * (self.tick_hz as u128)) + (NANOS_PER_SECOND - 1)) / NANOS_PER_SECOND;
+        ticks.max(1) as u64
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    fn delay_ticks_blocking(&self, ticks: u64) {
+        if ticks == 0 {
+            return;
+        }
+
+        let start = self.now();
+        while self.now().wrapping_sub(start) < ticks {
+            core::hint::spin_loop();
+        }
     }
 
     /// Internal method to check if the SysTick interrupt is pending.
@@ -312,6 +338,22 @@ impl Timer {
     }
 }
 
+#[cfg(feature = "embedded-hal")]
+impl embedded_hal::delay::DelayNs for Timer {
+    fn delay_ns(&mut self, ns: u32) {
+        let ticks = self.delay_ticks_from_ns(ns);
+        self.delay_ticks_blocking(ticks);
+    }
+}
+
+#[cfg(feature = "embedded-hal")]
+impl embedded_hal::delay::DelayNs for &Timer {
+    fn delay_ns(&mut self, ns: u32) {
+        let ticks = self.delay_ticks_from_ns(ns);
+        self.delay_ticks_blocking(ticks);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +377,31 @@ mod tests {
         assert_eq!(Timer::compute_shift(1000, 12_000), 32);
         // This ratio overflows 32bit, so we shift
         assert_eq!(Timer::compute_shift(3, 16_000_000_000), 33);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_ticks_from_ns_rounds_up() {
+        let timer = Timer::new(1_000_000, 5, 1_000_000);
+        assert_eq!(timer.delay_ticks_from_ns(0), 0);
+        assert_eq!(timer.delay_ticks_from_ns(1), 1);
+        assert_eq!(timer.delay_ticks_from_ns(1_000), 1);
+        assert_eq!(timer.delay_ticks_from_ns(1_001), 2);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_ns_trait_for_timer_accepts_zero_delay() {
+        let mut timer = Timer::new(1_000_000, 5, 1_000_000);
+        embedded_hal::delay::DelayNs::delay_ns(&mut timer, 0);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_ns_trait_for_timer_reference_accepts_zero_delay() {
+        let timer = Timer::new(1_000_000, 5, 1_000_000);
+        let mut delay = &timer;
+        embedded_hal::delay::DelayNs::delay_ns(&mut delay, 0);
     }
 
     #[test]

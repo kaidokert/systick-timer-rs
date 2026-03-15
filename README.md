@@ -45,6 +45,11 @@ To run the tests, run without default features:
 cargo test --no-default-features
 ```
 
+To enable the optional `embedded-hal` 1.0 `DelayNs` implementation:
+```sh
+cargo add systick-timer --features embedded-hal
+```
+
 ## Todo:
 
 Add a constant-execution time option to now(). This would trade off

@@ -19,15 +19,17 @@ exclude = ["/.github/*", ".pre-commit-config.yaml"]
 cortex-m = "0.7"
 cortex-m-rt = "0.7.5"
 embassy-time-driver = { version = "0.2", optional = true }
+embedded-hal = { version = "1.0", optional = true }
 
 [features]
 default = ["cortex-m"]
 cortex-m = []
 embassy-defaults = [] # Set up a default/demo instance
 diagnostics = [] # Enable diagnostic methods for testing
+embedded-hal = ["dep:embedded-hal"] # Implement embedded-hal 1.0 DelayNs
 
 [package.metadata.docs.rs]
-features = ["cortex-m", "embassy-time-driver"]
+features = ["cortex-m", "embassy-time-driver", "embedded-hal"]
 
 [dev-dependencies]
 cortex-m = { version = "0.7" } #, features= ["critical-section-single-core"]}

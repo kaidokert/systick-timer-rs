@@ -6,6 +6,8 @@
 //!
 //! In addition, optionally wraps this into a basic Embassy time
 //! driver.
+//! With the `embedded-hal` feature enabled, [`Timer`] also implements
+//! [`embedded_hal::delay::DelayNs`].
 //!
 //! The timer is a standalone implementation that can be used from
 //! any Cortex-M0/M3/M4/M7 code.
