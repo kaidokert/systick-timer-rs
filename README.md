@@ -56,6 +56,10 @@ To enable the optional `embedded-hal` 1.0 `DelayNs` implementation:
 cargo add systick-timer --features embedded-hal
 ```
 
+The `DelayNs` implementation is a blocking busy wait driven by SysTick, so the
+timer must be started first and its counter must keep advancing while the delay
+is in progress.
+
 ## Todo:
 
 Add a constant-execution time option to now(). This would trade off

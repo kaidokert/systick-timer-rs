@@ -188,6 +188,11 @@ impl Timer {
     }
 
     #[cfg(feature = "embedded-hal")]
+    /// Blocking delay helper.
+    ///
+    /// Requires the underlying SysTick timer to be started and actively
+    /// advancing. If the hardware counter is stalled, this loop will not
+    /// complete.
     fn delay_cycles_blocking(&self, cycles: u64) {
         if cycles == 0 {
             return;
@@ -360,6 +365,10 @@ impl Timer {
 }
 
 #[cfg(feature = "embedded-hal")]
+/// Busy-wait delay implementation backed by SysTick progress.
+///
+/// Callers must start the timer with [`Timer::start`] before using this trait.
+/// If SysTick is not running, delay calls will not complete.
 impl embedded_hal::delay::DelayNs for Timer {
     fn delay_ns(&mut self, ns: u32) {
         let cycles = self.delay_cycles_from_ns(ns);
@@ -368,6 +377,10 @@ impl embedded_hal::delay::DelayNs for Timer {
 }
 
 #[cfg(feature = "embedded-hal")]
+/// Busy-wait delay implementation backed by SysTick progress.
+///
+/// Callers must start the timer with [`Timer::start`] before using this trait.
+/// If SysTick is not running, delay calls will not complete.
 impl embedded_hal::delay::DelayNs for &Timer {
     fn delay_ns(&mut self, ns: u32) {
         let cycles = self.delay_cycles_from_ns(ns);
