@@ -5,6 +5,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(test)]
 use core::sync::atomic::AtomicBool;
 
+#[cfg(feature = "embedded-hal")]
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
 /// A 64-bit timer based on SysTick.
 ///
 /// Stores wraparounds in 2 32-bit atomics. Scales the systick counts
@@ -13,6 +16,8 @@ pub struct Timer {
     inner_wraps: AtomicU32, // Counts SysTick interrupts (lower 32 bits)
     outer_wraps: AtomicU32, // Counts overflows of inner_wraps (upper 32 bits)
     reload_value: u32,      // SysTick reload value (max 2^24 - 1)
+    #[cfg(feature = "embedded-hal")]
+    systick_freq: u64, // Input SysTick frequency in Hz
     tick_hz: u64,           // Output frequency in Hz
     multiplier: u64,        // Precomputed for scaling cycles to ticks
     shift: u32,             // Precomputed for scaling efficiency
@@ -25,38 +30,7 @@ pub struct Timer {
 }
 
 impl Timer {
-    /// SysTick handler.
-    ///
-    /// Call this from the SysTick interrupt handler.
-    pub fn systick_handler(&self) {
-        // Increment inner_wraps and check for overflow
-        let inner = self.inner_wraps.load(Ordering::Relaxed);
-        // Check for overflow (inner was u32::MAX)
-        // Store the incremented value
-        self.inner_wraps
-            .store(inner.wrapping_add(1), Ordering::SeqCst);
-        if inner == u32::MAX {
-            // Increment outer_wraps
-            let outer = self.outer_wraps.load(Ordering::Relaxed).wrapping_add(1);
-            self.outer_wraps.store(outer, Ordering::SeqCst);
-        }
-    }
-
-    /// Robust `now()` (VAL-jump tie-breaker, no COUNTFLAG dependency).
-    ///
-    /// ## Design: One-Wrap Compensation via PendST Detection
-    /// This implementation is designed to handle exactly **one missed SysTick wrap**.
-    ///
-    /// **How it works:**
-    /// 1. Uses PendST bit to detect when the SysTick ISR is pending (hardware wrapped but ISR hasn't run)
-    /// 2. If PendST is set, adds +1 to the wrap count to compensate for the missed wrap
-    /// 3. This allows monotonic time even when the ISR is delayed by up to one full wrap period
-    ///
-    /// **Design limit:**
-    /// If the SysTick ISR is starved for MORE than one complete wrap period, this compensation
-    /// becomes insufficient and monotonic violations occur. The ISR starvation detection logic
-    /// in `diagnose_timing_violation()` identifies these as catastrophic "N+1 missed wraps".
-    pub fn now(&self) -> u64 {
+    fn stable_cycle_snapshot(&self) -> (u64, u64) {
         let reload = self.reload_value as u64;
 
         loop {
@@ -112,27 +86,65 @@ impl Timer {
                 (wraps_pre, val_after)
             };
 
-            // Calculate final time.
-            let reload_plus_1 = reload + 1;
-            let low_part = reload - final_val;
-
-            // If cycles computation would overflow u64, use u128 path from the start
-            if wraps_u64 > (u64::MAX - low_part) / reload_plus_1 {
-                let cycles128 = (wraps_u64 as u128) * (reload_plus_1 as u128) + (low_part as u128);
-                let ticks128 = cycles128 * (self.multiplier as u128);
-                return (ticks128 >> self.shift) as u64;
-            }
-
-            let total_cycles = wraps_u64 * reload_plus_1 + low_part;
-
-            // Scale to ticks.
-            let (result, mul_overflow) = total_cycles.overflowing_mul(self.multiplier);
-            if mul_overflow {
-                let wide = (total_cycles as u128) * (self.multiplier as u128);
-                return (wide >> self.shift) as u64;
-            }
-            return result >> self.shift;
+            // Return the cycle snapshot as wrap count and current VAL-derived low part.
+            return (wraps_u64, reload - final_val);
         }
+    }
+
+    /// SysTick handler.
+    ///
+    /// Call this from the SysTick interrupt handler.
+    pub fn systick_handler(&self) {
+        // Increment inner_wraps and check for overflow
+        let inner = self.inner_wraps.load(Ordering::Relaxed);
+        // Check for overflow (inner was u32::MAX)
+        // Store the incremented value
+        self.inner_wraps
+            .store(inner.wrapping_add(1), Ordering::SeqCst);
+        if inner == u32::MAX {
+            // Increment outer_wraps
+            let outer = self.outer_wraps.load(Ordering::Relaxed).wrapping_add(1);
+            self.outer_wraps.store(outer, Ordering::SeqCst);
+        }
+    }
+
+    /// Robust `now()` (VAL-jump tie-breaker, no COUNTFLAG dependency).
+    ///
+    /// ## Design: One-Wrap Compensation via PendST Detection
+    /// This implementation is designed to handle exactly **one missed SysTick wrap**.
+    ///
+    /// **How it works:**
+    /// 1. Uses PendST bit to detect when the SysTick ISR is pending (hardware wrapped but ISR hasn't run)
+    /// 2. If PendST is set, adds +1 to the wrap count to compensate for the missed wrap
+    /// 3. This allows monotonic time even when the ISR is delayed by up to one full wrap period
+    ///
+    /// **Design limit:**
+    /// If the SysTick ISR is starved for MORE than one complete wrap period, this compensation
+    /// becomes insufficient and monotonic violations occur. The ISR starvation detection logic
+    /// in `diagnose_timing_violation()` identifies these as catastrophic "N+1 missed wraps".
+    pub fn now(&self) -> u64 {
+        let reload = self.reload_value as u64;
+        let (wraps_u64, low_part) = self.stable_cycle_snapshot();
+
+        // Calculate final time.
+        let reload_plus_1 = reload + 1;
+
+        // If cycles computation would overflow u64, use u128 path from the start
+        if wraps_u64 > (u64::MAX - low_part) / reload_plus_1 {
+            let cycles128 = (wraps_u64 as u128) * (reload_plus_1 as u128) + (low_part as u128);
+            let ticks128 = cycles128 * (self.multiplier as u128);
+            return (ticks128 >> self.shift) as u64;
+        }
+
+        let total_cycles = wraps_u64 * reload_plus_1 + low_part;
+
+        // Scale to ticks.
+        let (result, mul_overflow) = total_cycles.overflowing_mul(self.multiplier);
+        if mul_overflow {
+            let wide = (total_cycles as u128) * (self.multiplier as u128);
+            return (wide >> self.shift) as u64;
+        }
+        result >> self.shift
     }
 
     /// Returns the current SysTick counter value.
@@ -155,6 +167,41 @@ impl Timer {
     /// Returns the output tick frequency in Hz.
     pub const fn tick_hz(&self) -> u64 {
         self.tick_hz
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    fn delay_cycles_from_ns(&self, ns: u32) -> u64 {
+        if ns == 0 || self.systick_freq == 0 {
+            return 0;
+        }
+
+        let ticks = (((ns as u128) * (self.systick_freq as u128)) + (NANOS_PER_SECOND - 1))
+            / NANOS_PER_SECOND;
+        ticks.min(u64::MAX as u128) as u64
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    fn current_cycles_wrapping(&self) -> u64 {
+        let reload_plus_1 = self.reload_value as u64 + 1;
+        let (wraps_u64, low_part) = self.stable_cycle_snapshot();
+        wraps_u64.wrapping_mul(reload_plus_1).wrapping_add(low_part)
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    /// Blocking delay helper.
+    ///
+    /// Requires the underlying SysTick timer to be started and actively
+    /// advancing. If the hardware counter is stalled, this loop will not
+    /// complete.
+    fn delay_cycles_blocking(&self, cycles: u64) {
+        if cycles == 0 {
+            return;
+        }
+
+        let start = self.current_cycles_wrapping();
+        while self.current_cycles_wrapping().wrapping_sub(start) < cycles {
+            core::hint::spin_loop();
+        }
     }
 
     /// Internal method to check if the SysTick interrupt is pending.
@@ -214,6 +261,9 @@ impl Timer {
         if reload_value == 0 {
             panic!("Reload value cannot be 0");
         }
+        if systick_freq == 0 {
+            panic!("SysTick frequency cannot be 0");
+        }
 
         // Use a shift to maintain precision and keep multiplier within u64
         let shift = Self::compute_shift(tick_hz, systick_freq);
@@ -223,6 +273,8 @@ impl Timer {
             inner_wraps: AtomicU32::new(0),
             outer_wraps: AtomicU32::new(0),
             reload_value,
+            #[cfg(feature = "embedded-hal")]
+            systick_freq,
             tick_hz,
             multiplier,
             shift,
@@ -312,6 +364,30 @@ impl Timer {
     }
 }
 
+#[cfg(feature = "embedded-hal")]
+/// Busy-wait delay implementation backed by SysTick progress.
+///
+/// Callers must start the timer with [`Timer::start`] before using this trait.
+/// If SysTick is not running, delay calls will not complete.
+impl embedded_hal::delay::DelayNs for Timer {
+    fn delay_ns(&mut self, ns: u32) {
+        let cycles = self.delay_cycles_from_ns(ns);
+        self.delay_cycles_blocking(cycles);
+    }
+}
+
+#[cfg(feature = "embedded-hal")]
+/// Busy-wait delay implementation backed by SysTick progress.
+///
+/// Callers must start the timer with [`Timer::start`] before using this trait.
+/// If SysTick is not running, delay calls will not complete.
+impl embedded_hal::delay::DelayNs for &Timer {
+    fn delay_ns(&mut self, ns: u32) {
+        let cycles = self.delay_cycles_from_ns(ns);
+        self.delay_cycles_blocking(cycles);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +411,99 @@ mod tests {
         assert_eq!(Timer::compute_shift(1000, 12_000), 32);
         // This ratio overflows 32bit, so we shift
         assert_eq!(Timer::compute_shift(3, 16_000_000_000), 33);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_cycles_from_ns_rounds_up() {
+        let timer = Timer::new(1_000_000, 5, 8_000_000);
+        assert_eq!(timer.delay_cycles_from_ns(0), 0);
+        assert_eq!(timer.delay_cycles_from_ns(1), 1);
+        assert_eq!(timer.delay_cycles_from_ns(125), 1);
+        assert_eq!(timer.delay_cycles_from_ns(126), 2);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_cycles_from_ns_saturates() {
+        let timer = Timer {
+            inner_wraps: AtomicU32::new(0),
+            outer_wraps: AtomicU32::new(0),
+            reload_value: 5,
+            systick_freq: u64::MAX,
+            tick_hz: 1,
+            multiplier: 0,
+            shift: 0,
+            current_systick: AtomicU32::new(0),
+            after_v1_hook: None,
+            pendst_is_pending: AtomicBool::new(false),
+        };
+
+        assert_eq!(timer.delay_cycles_from_ns(u32::MAX), u64::MAX);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_ns_trait_for_timer_accepts_zero_delay() {
+        let mut timer = Timer::new(1_000_000, 5, 1_000_000);
+        embedded_hal::delay::DelayNs::delay_ns(&mut timer, 0);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_ns_trait_for_timer_reference_accepts_zero_delay() {
+        let timer = Timer::new(1_000_000, 5, 1_000_000);
+        let mut delay = &timer;
+        embedded_hal::delay::DelayNs::delay_ns(&mut delay, 0);
+    }
+
+    #[cfg(feature = "embedded-hal")]
+    #[test]
+    fn test_delay_ns_waits_full_duration_from_partial_tick_phase() {
+        use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Duration;
+
+        fn advance_one_cycle(timer: &Timer, reload: u32) {
+            let current = timer.get_syst();
+            if current == 0 {
+                timer.systick_handler();
+                timer.set_syst(reload);
+            } else {
+                timer.set_syst(current - 1);
+            }
+        }
+
+        const RELOAD: u32 = 9;
+        let timer = Arc::new(Timer::new(1, RELOAD, 10));
+        timer.set_syst(1);
+
+        let done = Arc::new(AtomicBool::new(false));
+        let timer_for_thread = Arc::clone(&timer);
+        let done_for_thread = Arc::clone(&done);
+
+        let handle = thread::spawn(move || {
+            let mut delay = &*timer_for_thread;
+            embedded_hal::delay::DelayNs::delay_ns(&mut delay, 1_000_000_000);
+            done_for_thread.store(true, AtomicOrdering::SeqCst);
+        });
+
+        thread::sleep(Duration::from_millis(10));
+        assert!(!done.load(AtomicOrdering::SeqCst));
+
+        for _ in 0..9 {
+            advance_one_cycle(&timer, RELOAD);
+            thread::sleep(Duration::from_millis(1));
+        }
+
+        assert!(!done.load(AtomicOrdering::SeqCst));
+
+        advance_one_cycle(&timer, RELOAD);
+        thread::sleep(Duration::from_millis(10));
+
+        assert!(done.load(AtomicOrdering::SeqCst));
+        handle.join().unwrap();
     }
 
     #[test]
