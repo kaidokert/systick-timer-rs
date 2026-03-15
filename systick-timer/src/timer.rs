@@ -177,7 +177,7 @@ impl Timer {
 
         let ticks = (((ns as u128) * (self.systick_freq as u128)) + (NANOS_PER_SECOND - 1))
             / NANOS_PER_SECOND;
-        ticks.max(1).min(u64::MAX as u128) as u64
+        ticks.min(u64::MAX as u128) as u64
     }
 
     #[cfg(feature = "embedded-hal")]
